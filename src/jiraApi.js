@@ -261,14 +261,14 @@ export async function fetchJiraIssue(config, issueKey) {
   return { summary: data.fields?.summary || 'Unknown Ticket' };
 }
 
-export async function fetchAssignedIssues(config, days = 30) {
+export async function fetchAssignedIssues(config, days = 30, assignee = '') {
   if (!config.email || !config.token) {
     throw new Error('Jira Email and Token are required.');
   }
 
   const authString = btoa(`${config.email}:${config.token}`);
-  // JQL: fetch issues assigned to current user, updated in last X days
-  const jqlQuery = `assignee = currentUser() AND updated >= '-${days}d' ORDER BY priority DESC, created DESC`;
+  const assigneeJQL = assignee.trim() ? `assignee = "${assignee.trim()}"` : `assignee = currentUser()`;
+  const jqlQuery = `${assigneeJQL} AND updated >= '-${days}d' ORDER BY priority DESC, created DESC`;
   
   const payload = {
     jql: jqlQuery,

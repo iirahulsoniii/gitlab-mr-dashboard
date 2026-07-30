@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { fetchAssignedIssues } from '../jiraApi';
-import { RefreshCcw, Loader2, AlertCircle } from 'lucide-react';
+import { RefreshCcw, Loader2, AlertCircle, User } from 'lucide-react';
 import '../jira.css';
 
 export default function JiraIssuesDashboard({ config }) {
@@ -10,6 +10,7 @@ export default function JiraIssuesDashboard({ config }) {
   
   const [daysFilter, setDaysFilter] = useState(30);
   const [priorityFilter, setPriorityFilter] = useState('all');
+  const [assignee, setAssignee] = useState('');
 
   useEffect(() => {
     if (config.email && config.token) {
@@ -23,7 +24,7 @@ export default function JiraIssuesDashboard({ config }) {
     setLoading(true);
     setError('');
     try {
-      const data = await fetchAssignedIssues(config, daysFilter);
+      const data = await fetchAssignedIssues(config, daysFilter, assignee);
       setIssues(data);
     } catch (err) {
       setError(err.message);
@@ -64,6 +65,18 @@ export default function JiraIssuesDashboard({ config }) {
     <div className="flex-col gap-6" style={{ marginTop: '1rem' }}>
       <div className="flex justify-between items-center glass" style={{ padding: '1rem 1.5rem' }}>
         <div className="flex gap-4 items-center">
+          <div className="flex items-center gap-2" style={{ background: 'rgba(255,255,255,0.05)', padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+            <User size={16} style={{ color: 'var(--text-secondary)' }} />
+            <input 
+              type="text" 
+              placeholder="Assignee (leave blank for you)" 
+              value={assignee}
+              onChange={e => setAssignee(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && loadData()}
+              style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', width: '220px', fontSize: '0.9rem' }}
+            />
+          </div>
+
           <div className="flex gap-2 items-center" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
             Updated in last: 
             <select className="btn" value={daysFilter} onChange={(e) => setDaysFilter(Number(e.target.value))}>
