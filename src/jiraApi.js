@@ -83,9 +83,25 @@ export async function fetchJiraData(config, days = 30) {
     };
 
     // 1. Worklogs
-    const worklogs = issue.fields?.worklog?.worklogs || [];
-    // If total > fetched, we might need a separate request, but typically 20 worklogs is enough.
-    // Simplifying: just parse what is returned.
+    let worklogs = issue.fields?.worklog?.worklogs || [];
+    const totalWorklogs = issue.fields?.worklog?.total || 0;
+    
+    // If the ticket has more worklogs than what was returned in the search payload (default max 20),
+    // fetch the full worklog list for this specific issue.
+    if (totalWorklogs > worklogs.length) {
+      try {
+        const wlRes = await fetch(`/jira-api/rest/api/3/issue/${issueKey}/worklog?maxResults=5000`, {
+          headers
+        });
+        if (wlRes.ok) {
+          const wlData = await wlRes.json();
+          worklogs = wlData.worklogs || worklogs;
+        }
+      } catch (e) {
+        console.warn(`Failed to fetch full worklogs for ${issueKey}`, e);
+      }
+    }
+
     worklogs.forEach(wl => {
       if (wl.author?.emailAddress?.toLowerCase() === config.email.toLowerCase()) {
         const wlCreated = parseISO(wl.started);
@@ -226,4 +242,53 @@ export async function logJiraHours(config, issueKey, dateStr, hours, commentText
   }
 
   return response.json();
+}
+
+export async function fetchJiraIssue(config, issueKey) {
+  const authString = btoa(`${config.email}:${config.token}`);
+  const response = await fetch(`/jira-api/rest/api/3/issue/${issueKey}?fields=summary`, {
+    headers: {
+      'Authorization': `Basic ${authString}`,
+      'Accept': 'application/json'
+    }
+  });
+  
+  if (!response.ok) {
+    throw new Error("Could not find that ticket.");
+  }
+  
+  const data = await response.json();
+  return { summary: data.fields?.summary || 'Unknown Ticket' };
+}
+
+export async function fetchAssignedIssues(config, days = 30) {
+  if (!config.email || !config.token) {
+    throw new Error('Jira Email and Token are required.');
+  }
+
+  const authString = btoa(`${config.email}:${config.token}`);
+  // JQL: fetch issues assigned to current user, updated in last X days
+  const jqlQuery = `assignee = currentUser() AND updated >= '-${days}d' ORDER BY priority DESC, created DESC`;
+  
+  const payload = {
+    jql: jqlQuery,
+    fields: ["summary", "priority", "status", "created", "updated", "issuetype"],
+    maxResults: 100
+  };
+
+  const response = await fetch('/jira-api/rest/api/3/search/jql', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Basic ${authString}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch assigned issues: ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  return data.issues || [];
 }

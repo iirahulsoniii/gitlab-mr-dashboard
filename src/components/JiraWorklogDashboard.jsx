@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { fetchJiraData, logJiraHours } from '../jiraApi';
-import { RefreshCcw, Loader2, Search } from 'lucide-react';
+import { fetchJiraData, logJiraHours, fetchJiraIssue } from '../jiraApi';
+import { RefreshCcw, Loader2, Search, CalendarOff, CalendarHeart } from 'lucide-react';
 import '../jira.css';
 
 export default function JiraWorklogDashboard({ config }) {
@@ -12,6 +12,17 @@ export default function JiraWorklogDashboard({ config }) {
   
   // Track logging state per ticket: { [dateStr_ticketId]: { comment: '', hours: '', logging: false, success: false } }
   const [logForms, setLogForms] = useState({});
+  const [holidays, setHolidays] = useState(() => JSON.parse(localStorage.getItem('jira_holidays') || '[]'));
+
+  useEffect(() => {
+    localStorage.setItem('jira_holidays', JSON.stringify(holidays));
+  }, [holidays]);
+
+  const toggleHoliday = (dateStr) => {
+    setHolidays(prev => 
+      prev.includes(dateStr) ? prev.filter(d => d !== dateStr) : [...prev, dateStr]
+    );
+  };
 
   useEffect(() => {
     if (config.email && config.token) {
@@ -55,6 +66,28 @@ export default function JiraWorklogDashboard({ config }) {
     
     try {
       await logJiraHours(config, ticket.issue_key, dateStr, hours, form.comment);
+      
+      // Optimistically update the UI to instantly reflect the logged hours
+      setData(prevData => {
+        if (!prevData) return prevData;
+        const newDays = prevData.days.map(d => {
+          if (d.date === dateStr) {
+            const newTickets = d.tickets.map(t => {
+              if (t.issue_key === ticket.issue_key) {
+                return { ...t, hours: t.hours + hours, actions: Array.from(new Set([...t.actions, 'Logged Hours'])) };
+              }
+              return t;
+            });
+            // Re-sort tickets so the one with most hours is on top
+            newTickets.sort((a, b) => b.hours - a.hours);
+            return { ...d, total_hours: d.total_hours + hours, tickets: newTickets };
+          }
+          return d;
+        });
+        const newSummary = { ...prevData.summary, total_hours: prevData.summary.total_hours + hours };
+        return { ...prevData, days: newDays, summary: newSummary };
+      });
+      
       updateLogForm(formKey, 'success', true);
       // Quickly reset form
       setTimeout(() => {
@@ -63,11 +96,43 @@ export default function JiraWorklogDashboard({ config }) {
           delete next[formKey];
           return next;
         });
-        loadData(); // refresh data after success
+        // We no longer strictly need loadData() since we updated local state, but calling it keeps us in sync
+        loadData();
       }, 1500);
     } catch (err) {
       alert(err.message);
       updateLogForm(formKey, 'logging', false);
+    }
+  };
+
+  const manuallyAddTicket = async (dateStr) => {
+    const issueKey = window.prompt("Enter the Jira Ticket ID (e.g. CS-12345):");
+    if (!issueKey) return;
+    
+    try {
+      const result = await fetchJiraIssue(config, issueKey);
+      
+      setData(prevData => {
+        if (!prevData) return prevData;
+        const newDays = prevData.days.map(d => {
+          if (d.date === dateStr) {
+            // Check if it already exists
+            if (!d.tickets.some(t => t.issue_key === issueKey)) {
+              const newTicket = {
+                issue_key: issueKey,
+                hours: 0,
+                summary: result.summary,
+                actions: ["Manually Added"]
+              };
+              return { ...d, tickets: [newTicket, ...d.tickets] };
+            }
+          }
+          return d;
+        });
+        return { ...prevData, days: newDays };
+      });
+    } catch (err) {
+      alert(err.message);
     }
   };
 
@@ -101,7 +166,7 @@ export default function JiraWorklogDashboard({ config }) {
     }
 
     if (showMissingOnly) {
-      if (day.is_weekend || day.total_hours >= 8) return false;
+      if (day.is_weekend || holidays.includes(day.date) || day.total_hours >= 8) return false;
     }
     return true;
   });
@@ -160,9 +225,25 @@ export default function JiraWorklogDashboard({ config }) {
           
           return (
             <div key={day.date} className="day-block">
-              <div className={`day-date ${day.is_weekend ? 'weekend' : ''} ${hasActivity ? 'has-activity' : ''}`}>
+              <div className={`day-date ${day.is_weekend ? 'weekend' : ''} ${holidays.includes(day.date) ? 'holiday' : ''} ${hasActivity ? 'has-activity' : ''}`}>
                 <div className="date-text">{formattedDate}</div>
-                <div className="date-subtext">{day.is_weekend ? 'Weekend' : ''}</div>
+                <div className="date-subtext">
+                  {day.is_weekend ? 'Weekend' : ''}
+                  {holidays.includes(day.date) ? (day.is_weekend ? ' • Holiday' : 'Holiday') : ''}
+                </div>
+                <div className="date-actions">
+                  <button className="add-ticket-btn" onClick={() => manuallyAddTicket(day.date)}>
+                    + Add Ticket
+                  </button>
+                  {!day.is_weekend && (
+                    <button 
+                      className={`holiday-btn ${holidays.includes(day.date) ? 'is-holiday' : ''}`}
+                      onClick={() => toggleHoliday(day.date)}
+                    >
+                      {holidays.includes(day.date) ? 'Remove Holiday' : 'Mark as Holiday'}
+                    </button>
+                  )}
+                </div>
               </div>
               
               <div className="day-content">

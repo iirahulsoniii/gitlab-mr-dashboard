@@ -5,7 +5,8 @@ import MRList from './components/MRList';
 import JiraList from './components/JiraList';
 import JiraWorklogDashboard from './components/JiraWorklogDashboard';
 import DBDashboard from './components/DBDashboard';
-import { Settings, Database, ListFilter, FileText, CalendarClock, Code2 } from 'lucide-react';
+import JiraIssuesDashboard from './components/JiraIssuesDashboard';
+import { Settings, Database, ListFilter, FileText, CalendarClock, Code2, CheckSquare } from 'lucide-react';
 import { fetchMergeRequests } from './api';
 
 const DEFAULT_FILTERS = {
@@ -34,7 +35,7 @@ function App() {
     return { email: '', token: '', bauTicket: 'CS-17557' };
   });
 
-  const [activeView, setActiveView] = useState('mr'); // 'mr', 'jira', or 'db'
+  const [activeView, setActiveView] = useState('mr'); // 'mr', 'jira', 'db', or 'jira-issues'
   const [activeInstanceId, setActiveInstanceId] = useState(instances.length > 0 ? instances[0].id : null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(instances.length === 0);
   const [mrs, setMrs] = useState([]);
@@ -228,6 +229,13 @@ function App() {
           </button>
           <button 
             className="btn" 
+            style={{ border: 'none', background: activeView === 'jira-issues' ? 'var(--surface-color-light)' : 'transparent', color: activeView === 'jira-issues' ? 'var(--accent-color)' : 'var(--text-secondary)' }}
+            onClick={() => setActiveView('jira-issues')}
+          >
+            <CheckSquare size={18} /> Jira Issues
+          </button>
+          <button 
+            className="btn" 
             style={{ border: 'none', background: activeView === 'db' ? 'var(--surface-color-light)' : 'transparent', color: activeView === 'db' ? 'var(--accent-color)' : 'var(--text-secondary)' }}
             onClick={() => setActiveView('db')}
           >
@@ -239,7 +247,7 @@ function App() {
       <header className="flex justify-between items-center" style={{ marginBottom: '2rem' }}>
         <div className="flex-col gap-2">
           <h1 style={{ margin: 0, background: 'linear-gradient(45deg, var(--accent-color), #8b5cf6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            {activeView === 'mr' ? 'Merge Request Dashboard' : activeView === 'jira' ? 'Jira Worklog Dashboard' : 'Database Dashboard'}
+            {activeView === 'mr' ? 'Merge Request Dashboard' : activeView === 'jira' ? 'Jira Worklog Dashboard' : activeView === 'jira-issues' ? 'Jira Assigned Issues' : 'Database Dashboard'}
           </h1>
           
           {activeView === 'mr' && instances.length > 0 && (
@@ -300,6 +308,8 @@ function App() {
         )
       ) : activeView === 'jira' ? (
         <JiraWorklogDashboard config={jiraConfig} />
+      ) : activeView === 'jira-issues' ? (
+        <JiraIssuesDashboard config={jiraConfig} />
       ) : (
         <DBDashboard />
       )}

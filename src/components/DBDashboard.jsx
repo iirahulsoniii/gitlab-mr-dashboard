@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Play, Database, Server, AlertCircle, CheckCircle2, Search, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Play, Database, Server, AlertCircle, CheckCircle2, Search, Loader2, XCircle } from 'lucide-react';
 import '../db.css';
 
 const PAYMENT_QUERY = `SELECT
@@ -29,6 +29,7 @@ export default function DBDashboard() {
   const [error, setError] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
   const [search, setSearch] = useState('');
+  const abortControllerRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem('db_env', environment);
@@ -41,6 +42,11 @@ export default function DBDashboard() {
   const runQuery = async () => {
     if (!query.trim()) return;
     
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+    
     setLoading(true);
     setError(null);
     setSuccessMsg(null);
@@ -52,7 +58,8 @@ export default function DBDashboard() {
         const res = await fetch('/db-api/api/query', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ environment, query })
+          body: JSON.stringify({ environment, query }),
+          signal: abortControllerRef.current.signal
         });
         
         const data = await res.json();
@@ -71,6 +78,11 @@ export default function DBDashboard() {
         setError(null);
         break;
       } catch (err) {
+        if (err.name === 'AbortError') {
+          setError('Query execution cancelled.');
+          break;
+        }
+        
         const msg = err.message || '';
         const isConnectionError = msg.includes('DPY-6005') || msg.includes('DPY-6000') || msg.includes('Listener refused connection');
         
@@ -162,7 +174,18 @@ export default function DBDashboard() {
             outline: 'none'
           }}
         />
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          {loading && (
+            <button 
+              className="btn" 
+              onClick={() => {
+                if (abortControllerRef.current) abortControllerRef.current.abort();
+              }}
+              style={{ borderColor: 'var(--danger-color)', color: 'var(--danger-color)', background: 'transparent' }}
+            >
+              <XCircle size={16} /> Cancel
+            </button>
+          )}
           <button 
             className="btn btn-primary" 
             onClick={runQuery}
