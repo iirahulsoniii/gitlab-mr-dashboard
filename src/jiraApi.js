@@ -268,7 +268,7 @@ export async function fetchAssignedIssues(config, days = 30, assignee = '') {
 
   const authString = btoa(`${config.email}:${config.token}`);
   const assigneeJQL = assignee.trim() ? `assignee = "${assignee.trim()}"` : `assignee = currentUser()`;
-  const jqlQuery = `${assigneeJQL} AND updated >= '-${days}d' ORDER BY priority DESC, created DESC`;
+  const jqlQuery = `${assigneeJQL} AND status NOT IN ("Reject", "Rejected", "Closed", "Done", "Resolved") AND updated >= '-${days}d' ORDER BY priority DESC, created DESC`;
   
   const payload = {
     jql: jqlQuery,
