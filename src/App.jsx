@@ -35,6 +35,15 @@ function App() {
     return { email: '', token: '', bauTicket: 'CS-17557' };
   });
 
+  const [dbConfig, setDbConfig] = useState(() => {
+    const saved = localStorage.getItem('db-dashboard-config');
+    if (saved) return JSON.parse(saved);
+    return { 
+      stage: { user: '', password: '', dsn: '' }, 
+      prod: { user: '', password: '', dsn: '' } 
+    };
+  });
+
   const [activeView, setActiveView] = useState('mr'); // 'mr', 'jira', 'db', or 'jira-issues'
   const [activeInstanceId, setActiveInstanceId] = useState(instances.length > 0 ? instances[0].id : null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(instances.length === 0);
@@ -89,6 +98,12 @@ function App() {
   const handleSaveJiraConfig = (config) => {
     setJiraConfig(config);
     localStorage.setItem('jira-dashboard-config', JSON.stringify(config));
+    setIsSettingsOpen(false);
+  };
+
+  const handleSaveDbConfig = (config) => {
+    setDbConfig(config);
+    localStorage.setItem('db-dashboard-config', JSON.stringify(config));
     setIsSettingsOpen(false);
   };
 
@@ -311,7 +326,7 @@ function App() {
       ) : activeView === 'jira-issues' ? (
         <JiraIssuesDashboard config={jiraConfig} />
       ) : (
-        <DBDashboard />
+        <DBDashboard dbConfig={dbConfig} />
       )}
 
       <SettingsModal 
@@ -321,6 +336,8 @@ function App() {
         instances={instances}
         jiraConfig={jiraConfig}
         onSaveJiraConfig={handleSaveJiraConfig}
+        dbConfig={dbConfig}
+        onSaveDbConfig={handleSaveDbConfig}
       />
     </div>
   );

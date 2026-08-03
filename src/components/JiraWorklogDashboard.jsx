@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { fetchJiraData, logJiraHours, fetchJiraIssue } from '../jiraApi';
+import { fetchJiraData, logJiraHours, fetchJiraIssue, fetchAssignedIssues } from '../jiraApi';
 import { RefreshCcw, Loader2, Search, CalendarOff, CalendarHeart } from 'lucide-react';
 import '../jira.css';
 
 export default function JiraWorklogDashboard({ config }) {
   const [data, setData] = useState(null);
+  const [assignedIssues, setAssignedIssues] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [daysFilter, setDaysFilter] = useState(30);
@@ -36,8 +37,12 @@ export default function JiraWorklogDashboard({ config }) {
     setLoading(true);
     setError('');
     try {
-      const res = await fetchJiraData(config, daysFilter);
+      const [res, assigned] = await Promise.all([
+        fetchJiraData(config, daysFilter),
+        fetchAssignedIssues(config, 90, '')
+      ]);
       setData(res);
+      setAssignedIssues(assigned);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -136,6 +141,27 @@ export default function JiraWorklogDashboard({ config }) {
     }
   };
 
+  const quickAddTicket = (dateStr, issueKey, summary) => {
+    setData(prevData => {
+      if (!prevData) return prevData;
+      const newDays = prevData.days.map(d => {
+        if (d.date === dateStr) {
+          if (!d.tickets.some(t => t.issue_key === issueKey)) {
+            const newTicket = {
+              issue_key: issueKey,
+              hours: 0,
+              summary: summary,
+              actions: ["Quick Added"]
+            };
+            return { ...d, tickets: [newTicket, ...d.tickets] };
+          }
+        }
+        return d;
+      });
+      return { ...prevData, days: newDays };
+    });
+  };
+
   if (error) {
     return (
       <div className="glass" style={{ padding: '2rem', textAlign: 'center', borderColor: 'var(--danger-color)' }}>
@@ -232,8 +258,25 @@ export default function JiraWorklogDashboard({ config }) {
                   {holidays.includes(day.date) ? (day.is_weekend ? ' • Holiday' : 'Holiday') : ''}
                 </div>
                 <div className="date-actions">
+                  {assignedIssues.length > 0 && (
+                    <select 
+                      className="add-ticket-btn" 
+                      style={{ padding: '4px 8px', appearance: 'auto' }}
+                      value="" 
+                      onChange={(e) => {
+                        const issue = assignedIssues.find(i => i.key === e.target.value);
+                        if (issue) quickAddTicket(day.date, issue.key, issue.fields?.summary);
+                        e.target.value = ""; // reset
+                      }}
+                    >
+                      <option value="" disabled>+ Quick Add Assigned...</option>
+                      {assignedIssues.map(i => (
+                        <option key={i.key} value={i.key}>{i.key} - {i.fields?.summary?.substring(0, 30)}...</option>
+                      ))}
+                    </select>
+                  )}
                   <button className="add-ticket-btn" onClick={() => manuallyAddTicket(day.date)}>
-                    + Add Ticket
+                    + Manual Add
                   </button>
                   {!day.is_weekend && (
                     <button 

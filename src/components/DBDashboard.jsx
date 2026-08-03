@@ -21,9 +21,10 @@ FROM ocp_otp
 ORDER BY otp_id DESC 
 FETCH FIRST 10 ROWS ONLY`;
 
-export default function DBDashboard() {
+export default function DBDashboard({ dbConfig }) {
   const [environment, setEnvironment] = useState(() => localStorage.getItem('db_env') || 'stage');
   const [query, setQuery] = useState(() => localStorage.getItem('db_query') || PAYMENT_QUERY);
+  const [savedQueries, setSavedQueries] = useState(() => JSON.parse(localStorage.getItem('db_saved_queries') || '{}'));
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -38,6 +39,29 @@ export default function DBDashboard() {
   useEffect(() => {
     localStorage.setItem('db_query', query);
   }, [query]);
+
+  useEffect(() => {
+    localStorage.setItem('db_saved_queries', JSON.stringify(savedQueries));
+  }, [savedQueries]);
+
+  const saveCurrentQuery = () => {
+    if (!query.trim()) return;
+    const name = window.prompt("Enter a short name for this custom query:");
+    if (name && name.trim()) {
+      setSavedQueries(prev => ({ ...prev, [name.trim()]: query }));
+    }
+  };
+
+  const deleteSavedQuery = (name, e) => {
+    e.stopPropagation();
+    if (window.confirm(`Delete custom query "${name}"?`)) {
+      setSavedQueries(prev => {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      });
+    }
+  };
 
   const runQuery = async () => {
     if (!query.trim()) return;
@@ -58,7 +82,7 @@ export default function DBDashboard() {
         const res = await fetch('/db-api/api/query', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ environment, query }),
+          body: JSON.stringify({ environment, query, db_config: dbConfig }),
           signal: abortControllerRef.current.signal
         });
         
@@ -138,8 +162,8 @@ export default function DBDashboard() {
       </div>
 
       <div className="glass" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        <div className="flex gap-2" style={{ marginBottom: '0.5rem' }}>
-          <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', alignSelf: 'center', marginRight: '0.5rem' }}>Presets:</span>
+        <div className="flex gap-2 items-center" style={{ marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+          <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginRight: '0.25rem' }}>Presets:</span>
           <button 
             className="btn" 
             style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)' }}
@@ -153,6 +177,35 @@ export default function DBDashboard() {
             onClick={() => setQuery(OTP_QUERY)}
           >
             OTP
+          </button>
+
+          {Object.entries(savedQueries).map(([name, q]) => (
+            <div key={name} className="flex items-center" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
+              <button 
+                className="btn" 
+                style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem', border: 'none', background: 'transparent' }}
+                onClick={() => setQuery(q)}
+                title={q}
+              >
+                {name}
+              </button>
+              <button 
+                onClick={(e) => deleteSavedQuery(name, e)}
+                style={{ padding: '0.25rem 0.5rem', background: 'transparent', border: 'none', color: 'var(--danger-color)', cursor: 'pointer', borderLeft: '1px solid var(--border-color)', opacity: 0.7 }}
+                title="Delete preset"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+
+          <button 
+            className="btn" 
+            style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem', background: 'transparent', border: '1px dashed var(--accent-color)', color: 'var(--accent-color)', marginLeft: 'auto' }}
+            onClick={saveCurrentQuery}
+            disabled={!query.trim()}
+          >
+            + Save Current Query
           </button>
         </div>
         <textarea 

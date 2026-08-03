@@ -1,13 +1,20 @@
 import React, { useState } from 'react';
 import { Settings, Check, X, Plus, Trash2 } from 'lucide-react';
 
-export default function SettingsModal({ isOpen, onClose, instances, onSaveInstances, jiraConfig, onSaveJiraConfig }) {
+export default function SettingsModal({ isOpen, onClose, instances, onSaveInstances, jiraConfig, onSaveJiraConfig, dbConfig, onSaveDbConfig }) {
   const [localInstances, setLocalInstances] = useState(
     instances.length > 0 ? instances : [{ id: Date.now(), name: 'GitLab', provider: 'gitlab', url: 'https://gitlab.com', token: '' }]
   );
   
   const [localJiraConfig, setLocalJiraConfig] = useState(
     jiraConfig || { email: '', token: '', bauTicket: 'CS-17557' }
+  );
+
+  const [localDbConfig, setLocalDbConfig] = useState(
+    dbConfig || { 
+      stage: { user: '', password: '', dsn: '' }, 
+      prod: { user: '', password: '', dsn: '' } 
+    }
   );
 
   if (!isOpen) return null;
@@ -38,6 +45,7 @@ export default function SettingsModal({ isOpen, onClose, instances, onSaveInstan
     e.preventDefault();
     onSaveInstances(localInstances);
     onSaveJiraConfig(localJiraConfig);
+    onSaveDbConfig(localDbConfig);
   };
 
   return (
@@ -112,6 +120,42 @@ export default function SettingsModal({ isOpen, onClose, instances, onSaveInstan
               <div className="flex-col gap-2">
                 <label style={{ fontWeight: 500, fontSize: '0.875rem' }}>BAU Ticket ID</label>
                 <input className="w-full" type="text" value={localJiraConfig.bauTicket} onChange={(e) => setLocalJiraConfig({...localJiraConfig, bauTicket: e.target.value})} placeholder="e.g. CS-17557" />
+              </div>
+            </div>
+          </div>
+          
+          <h3 style={{ marginTop: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>Database Configuration (Optional)</h3>
+          
+          <div className="glass" style={{ padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+            <h4 style={{ margin: '0 0 1rem 0' }}>Stage Environment</h4>
+            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+              <div className="flex-col gap-2">
+                <label style={{ fontWeight: 500, fontSize: '0.875rem' }}>Username</label>
+                <input className="w-full" type="text" value={localDbConfig.stage?.user || ''} onChange={(e) => setLocalDbConfig({...localDbConfig, stage: {...localDbConfig.stage, user: e.target.value}})} placeholder="Stage DB User" />
+              </div>
+              <div className="flex-col gap-2">
+                <label style={{ fontWeight: 500, fontSize: '0.875rem' }}>Password</label>
+                <input className="w-full" type="password" value={localDbConfig.stage?.password || ''} onChange={(e) => setLocalDbConfig({...localDbConfig, stage: {...localDbConfig.stage, password: e.target.value}})} placeholder="••••••••" />
+              </div>
+              <div className="flex-col gap-2" style={{ gridColumn: '1 / -1' }}>
+                <label style={{ fontWeight: 500, fontSize: '0.875rem' }}>DSN (Connection String)</label>
+                <input className="w-full" type="text" value={localDbConfig.stage?.dsn || ''} onChange={(e) => setLocalDbConfig({...localDbConfig, stage: {...localDbConfig.stage, dsn: e.target.value}})} placeholder="host:port/service_name" />
+              </div>
+            </div>
+
+            <h4 style={{ margin: '0 0 1rem 0' }}>Prod Environment</h4>
+            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div className="flex-col gap-2">
+                <label style={{ fontWeight: 500, fontSize: '0.875rem' }}>Username</label>
+                <input className="w-full" type="text" value={localDbConfig.prod?.user || ''} onChange={(e) => setLocalDbConfig({...localDbConfig, prod: {...localDbConfig.prod, user: e.target.value}})} placeholder="Prod DB User" />
+              </div>
+              <div className="flex-col gap-2">
+                <label style={{ fontWeight: 500, fontSize: '0.875rem' }}>Password</label>
+                <input className="w-full" type="password" value={localDbConfig.prod?.password || ''} onChange={(e) => setLocalDbConfig({...localDbConfig, prod: {...localDbConfig.prod, password: e.target.value}})} placeholder="••••••••" />
+              </div>
+              <div className="flex-col gap-2" style={{ gridColumn: '1 / -1' }}>
+                <label style={{ fontWeight: 500, fontSize: '0.875rem' }}>DSN (Connection String)</label>
+                <input className="w-full" type="text" value={localDbConfig.prod?.dsn || ''} onChange={(e) => setLocalDbConfig({...localDbConfig, prod: {...localDbConfig.prod, dsn: e.target.value}})} placeholder="host:port/service_name" />
               </div>
             </div>
           </div>
