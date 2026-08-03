@@ -26,15 +26,25 @@ class QueryRequest(BaseModel):
     db_config: Optional[dict] = None
 
 def get_db_connection(environment: str, config: Optional[dict] = None):
+    prefix = "STAGE_DB_" if environment.lower() == "stage" else "PROD_DB_"
+    
     # If config provided from UI payload, use it
     if config and environment in config and config[environment].get('user'):
         env_config = config[environment]
         user = env_config.get('user')
         password = env_config.get('password')
+        
+        # If DSN is provided in UI, use it. Otherwise, construct from .env
         dsn = env_config.get('dsn')
+        if not dsn:
+            host = os.getenv(f"{prefix}HOST")
+            port = os.getenv(f"{prefix}PORT")
+            service = os.getenv(f"{prefix}SERVICE")
+            if host and port and service:
+                dsn = oracledb.makedsn(host, int(port), service_name=service)
         
         if not all([user, password, dsn]):
-            raise HTTPException(status_code=400, detail=f"Incomplete UI DB configuration for {environment}.")
+            raise HTTPException(status_code=400, detail=f"Incomplete UI DB configuration for {environment}. Please provide a DSN or ensure Host/Port/Service are in .env.")
             
         try:
             return oracledb.connect(user=user, password=password, dsn=dsn)
@@ -42,8 +52,6 @@ def get_db_connection(environment: str, config: Optional[dict] = None):
             raise HTTPException(status_code=500, detail=f"Database connection failed (via UI config): {str(e)}")
 
     # Fallback to .env logic if UI config not provided
-    prefix = "STAGE_DB_" if environment.lower() == "stage" else "PROD_DB_"
-    
     user = os.getenv(f"{prefix}USER")
     password = os.getenv(f"{prefix}PASSWORD")
     host = os.getenv(f"{prefix}HOST")
