@@ -269,7 +269,7 @@ export async function fetchAssignedIssues(config, days = 30, assignee = '') {
   const authString = btoa(`${config.email}:${config.token}`);
   // Use fuzzy match ~ if user types a custom assignee name, otherwise use currentUser()
   const assigneeJQL = assignee.trim() ? `assignee ~ "${assignee.trim()}"` : `assignee = currentUser()`;
-  const jqlQuery = `${assigneeJQL} AND status NOT IN ("Reject", "Rejected", "Closed", "Done", "Resolved") AND updated >= '-${days}d' ORDER BY priority DESC, created DESC`;
+  const jqlQuery = `${assigneeJQL} AND status NOT IN ("Reject", "Rejected", "Closed", "Done", "Resolved", "Ready for production", "Cancelled") AND updated >= '-${days}d' ORDER BY priority DESC, created DESC`;
   
   const payload = {
     jql: jqlQuery,

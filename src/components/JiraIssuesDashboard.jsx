@@ -45,10 +45,10 @@ export default function JiraIssuesDashboard({ config }) {
 
   const getPriorityColor = (name) => {
     const n = name?.toLowerCase() || '';
-    if (n.includes('highest') || n.includes('critical')) return 'var(--danger-color)';
-    if (n.includes('high')) return '#f97316';
-    if (n.includes('medium')) return 'var(--warning-color)';
-    if (n.includes('low')) return 'var(--info-color)';
+    if (n.includes('highest') || n.includes('critical') || n === 'p0' || n === 'p1') return 'var(--danger-color)';
+    if (n.includes('high') || n === 'p2') return '#f97316';
+    if (n.includes('medium') || n === 'p3') return 'var(--warning-color)';
+    if (n.includes('low') || n === 'p4') return 'var(--info-color)';
     return 'var(--text-secondary)';
   };
 
