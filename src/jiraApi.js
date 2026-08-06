@@ -273,7 +273,7 @@ export async function fetchAssignedIssues(config, days = 30, assignee = '') {
   
   const payload = {
     jql: jqlQuery,
-    fields: ["summary", "priority", "status", "created", "updated", "issuetype"],
+    fields: ["summary", "priority", "status", "created", "updated", "issuetype", "fixVersions"],
     maxResults: 100
   };
 

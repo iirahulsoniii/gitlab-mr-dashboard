@@ -10,6 +10,7 @@ export default function JiraIssuesDashboard({ config }) {
   
   const [daysFilter, setDaysFilter] = useState(30);
   const [priorityFilter, setPriorityFilter] = useState('all');
+  const [fixVersionFilter, setFixVersionFilter] = useState('all');
   const [assignee, setAssignee] = useState('');
 
   useEffect(() => {
@@ -34,13 +35,30 @@ export default function JiraIssuesDashboard({ config }) {
   };
 
   const filteredIssues = useMemo(() => {
-    if (priorityFilter === 'all') return issues;
-    return issues.filter(i => i.fields?.priority?.name === priorityFilter);
-  }, [issues, priorityFilter]);
+    return issues.filter(i => {
+      const matchesPriority = priorityFilter === 'all' || i.fields?.priority?.name === priorityFilter;
+      const matchesFixVersion = fixVersionFilter === 'all' || (
+        fixVersionFilter === 'none' 
+          ? (!i.fields?.fixVersions || i.fields.fixVersions.length === 0)
+          : i.fields?.fixVersions?.some(v => v.name === fixVersionFilter)
+      );
+      return matchesPriority && matchesFixVersion;
+    });
+  }, [issues, priorityFilter, fixVersionFilter]);
 
   const priorities = useMemo(() => {
     const p = new Set(issues.map(i => i.fields?.priority?.name).filter(Boolean));
     return Array.from(p).sort();
+  }, [issues]);
+
+  const fixVersions = useMemo(() => {
+    const versions = new Set();
+    issues.forEach(i => {
+      i.fields?.fixVersions?.forEach(v => {
+        if (v.name) versions.add(v.name);
+      });
+    });
+    return Array.from(versions).sort();
   }, [issues]);
 
   const getPriorityColor = (name) => {
@@ -63,8 +81,8 @@ export default function JiraIssuesDashboard({ config }) {
 
   return (
     <div className="flex-col gap-6" style={{ marginTop: '1rem' }}>
-      <div className="flex justify-between items-center glass" style={{ padding: '1rem 1.5rem' }}>
-        <div className="flex gap-4 items-center">
+      <div className="flex justify-between items-center glass" style={{ padding: '1rem 1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+        <div className="flex gap-4 items-center" style={{ flexWrap: 'wrap' }}>
           <div className="flex items-center gap-2" style={{ background: 'rgba(255,255,255,0.05)', padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
             <User size={16} style={{ color: 'var(--text-secondary)' }} />
             <input 
@@ -94,6 +112,15 @@ export default function JiraIssuesDashboard({ config }) {
               {priorities.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
+
+          <div className="flex gap-2 items-center" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+            Fix Version:
+            <select className="btn" value={fixVersionFilter} onChange={(e) => setFixVersionFilter(e.target.value)}>
+              <option value="all">All Versions</option>
+              <option value="none">No Version</option>
+              {fixVersions.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
         </div>
         
         <button className="btn" onClick={loadData} disabled={loading}>
@@ -117,12 +144,17 @@ export default function JiraIssuesDashboard({ config }) {
               <div key={issue.key} className="glass ticket-card" style={{ padding: '1.25rem 1.5rem', cursor: 'pointer' }} onClick={() => window.open(`https://omantel-om.atlassian.net/browse/${issue.key}`, '_blank')}>
                 <div className="flex-col gap-2" style={{ flexGrow: 1 }}>
                   <div className="flex justify-between items-start">
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3" style={{ flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--text-primary)' }}>{issue.key}</span>
                       <span className="tag" style={{ background: 'rgba(255,255,255,0.1)', color: 'var(--text-primary)' }}>{issue.fields?.status?.name}</span>
                       <span className="tag" style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${getPriorityColor(issue.fields?.priority?.name)}`, color: getPriorityColor(issue.fields?.priority?.name) }}>
                         {issue.fields?.priority?.name || 'No Priority'}
                       </span>
+                      {issue.fields?.fixVersions?.map(v => (
+                        <span key={v.id || v.name} className="tag" style={{ background: 'rgba(59, 130, 246, 0.15)', border: '1px solid rgba(59, 130, 246, 0.4)', color: '#60a5fa' }}>
+                          v: {v.name}
+                        </span>
+                      ))}
                     </div>
                     <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                       Updated: {new Date(issue.fields?.updated).toLocaleDateString()}
