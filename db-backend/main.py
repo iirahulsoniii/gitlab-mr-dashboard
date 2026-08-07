@@ -25,6 +25,10 @@ class QueryRequest(BaseModel):
     query: str
     db_config: Optional[dict] = None
 
+class TablesRequest(BaseModel):
+    environment: str # "stage" or "prod"
+    db_config: Optional[dict] = None
+
 def get_db_connection(environment: str, config: Optional[dict] = None):
     prefix = "STAGE_DB_" if environment.lower() == "stage" else "PROD_DB_"
     
@@ -67,6 +71,29 @@ def get_db_connection(environment: str, config: Optional[dict] = None):
         return conn
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
+
+@app.post("/api/tables")
+async def get_tables(req: TablesRequest):
+    conn = None
+    try:
+        conn = get_db_connection(req.environment, req.db_config)
+        cur = conn.cursor()
+        # Fetch user_tables
+        cur.execute("SELECT table_name FROM user_tables ORDER BY table_name")
+        tables = [row[0] for row in cur.fetchall()]
+        if not tables:
+            # Fallback to all_tables for current schema owner
+            cur.execute("SELECT table_name FROM all_tables WHERE owner = USER ORDER BY table_name")
+            tables = [row[0] for row in cur.fetchall()]
+        return {"tables": tables, "status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to fetch tables: {str(e)}")
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 @app.post("/api/query")
 async def execute_query(req: QueryRequest):

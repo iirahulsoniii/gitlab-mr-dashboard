@@ -25,15 +25,22 @@ export default function DBDashboard({ dbConfig }) {
   const [environment, setEnvironment] = useState(() => localStorage.getItem('db_env') || 'stage');
   const [query, setQuery] = useState(() => localStorage.getItem('db_query') || PAYMENT_QUERY);
   const [savedQueries, setSavedQueries] = useState(() => JSON.parse(localStorage.getItem('db_saved_queries') || '{}'));
+  const [tables, setTables] = useState([]);
+  const [loadingTables, setLoadingTables] = useState(false);
+  const [tableSearch, setTableSearch] = useState('');
+  const [isTableDropdownOpen, setIsTableDropdownOpen] = useState(false);
+  const [selectedTable, setSelectedTable] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
   const [search, setSearch] = useState('');
   const abortControllerRef = useRef(null);
+  const dropdownRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem('db_env', environment);
+    loadTables();
   }, [environment]);
 
   useEffect(() => {
@@ -43,6 +50,51 @@ export default function DBDashboard({ dbConfig }) {
   useEffect(() => {
     localStorage.setItem('db_saved_queries', JSON.stringify(savedQueries));
   }, [savedQueries]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsTableDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const loadTables = async () => {
+    setLoadingTables(true);
+    try {
+      const res = await fetch('/db-api/api/tables', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ environment, db_config: dbConfig })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.tables) {
+        setTables(data.tables);
+      }
+    } catch (e) {
+      console.warn('Could not load tables:', e);
+    } finally {
+      setLoadingTables(false);
+    }
+  };
+
+  const handleSelectTable = (tableName) => {
+    setSelectedTable(tableName);
+    const generatedQuery = `SELECT *
+FROM ${tableName}
+FETCH FIRST 10 ROWS ONLY`;
+    setQuery(generatedQuery);
+    setIsTableDropdownOpen(false);
+  };
+
+  const filteredTables = useMemo(() => {
+    if (!tableSearch.trim()) return tables;
+    const term = tableSearch.toLowerCase();
+    return tables.filter(t => t.toLowerCase().includes(term));
+  }, [tables, tableSearch]);
 
   const saveCurrentQuery = () => {
     if (!query.trim()) return;
@@ -76,52 +128,41 @@ export default function DBDashboard({ dbConfig }) {
     setSuccessMsg(null);
     setResult(null);
 
-    let retryCount = 0;
-    while (true) {
-      try {
-        const res = await fetch('/db-api/api/query', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ environment, query, db_config: dbConfig }),
-          signal: abortControllerRef.current.signal
-        });
-        
-        const data = await res.json();
-        
-        if (!res.ok) {
-          throw new Error(data.detail || 'Failed to execute query');
-        }
+    try {
+      const res = await fetch('/db-api/api/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ environment, query, db_config: dbConfig }),
+        signal: abortControllerRef.current.signal
+      });
+      
+      const data = await res.json().catch(() => ({}));
+      
+      if (!res.ok) {
+        throw new Error(data.detail || `Server returned error (${res.status} ${res.statusText}). Make sure the backend is running on port 8000.`);
+      }
 
-        if (data.data) {
-          setResult({ columns: data.columns, data: data.data });
-        } else {
-          setSuccessMsg(data.message);
-        }
-        
-        // Success, break out of retry loop
-        setError(null);
-        break;
-      } catch (err) {
-        if (err.name === 'AbortError') {
-          setError('Query execution cancelled.');
-          break;
-        }
-        
+      if (data.data) {
+        setResult({ columns: data.columns, data: data.data });
+      } else {
+        setSuccessMsg(data.message || 'Query executed successfully.');
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        setError('Query execution cancelled.');
+      } else {
         const msg = err.message || '';
-        const isConnectionError = msg.includes('DPY-6005') || msg.includes('DPY-6000') || msg.includes('Listener refused connection');
-        
-        if (isConnectionError) {
-          retryCount++;
-          setError(`Database connection failed. Retrying... (Attempt ${retryCount})`);
-          // Wait 2 seconds before retrying
-          await new Promise(resolve => setTimeout(resolve, 2000));
+        if (msg.includes('Failed to fetch') || msg.includes('Proxy Error') || msg.includes('500') || msg.includes('502')) {
+          setError(`Cannot reach backend server. Please verify FastAPI is running at http://localhost:8000 (run: npm run dev). ${msg}`);
+        } else if (msg.includes('DPY-6005') || msg.includes('DPY-6000') || msg.includes('Listener refused connection')) {
+          setError(`Oracle Database connection failed (${msg}). Please verify your VPN is connected and credentials/DSN in Settings or .env are valid.`);
         } else {
           setError(msg);
-          break; // Break loop for non-retriable errors
         }
       }
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const filteredData = useMemo(() => {
@@ -167,24 +208,134 @@ export default function DBDashboard({ dbConfig }) {
           <button 
             className="btn" 
             style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)' }}
-            onClick={() => setQuery(PAYMENT_QUERY)}
+            onClick={() => { setSelectedTable(''); setQuery(PAYMENT_QUERY); }}
           >
             Payments
           </button>
           <button 
             className="btn" 
             style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)' }}
-            onClick={() => setQuery(OTP_QUERY)}
+            onClick={() => { setSelectedTable(''); setQuery(OTP_QUERY); }}
           >
             OTP
           </button>
+
+          {/* Table Dropdown with Search Bar */}
+          <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
+            <button 
+              className="btn" 
+              onClick={() => setIsTableDropdownOpen(prev => !prev)}
+              style={{ 
+                padding: '0.25rem 0.75rem', 
+                fontSize: '0.875rem', 
+                background: selectedTable ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255,255,255,0.05)', 
+                border: selectedTable ? '1px solid #3b82f6' : '1px solid var(--border-color)',
+                color: selectedTable ? '#60a5fa' : 'var(--text-primary)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem'
+              }}
+            >
+              <Database size={14} />
+              {selectedTable ? `Table: ${selectedTable}` : `Explore Tables (${tables.length})`}
+              {loadingTables && <Loader2 size={12} className="spinner" />}
+            </button>
+
+            {isTableDropdownOpen && (
+              <div 
+                className="glass" 
+                style={{
+                  position: 'absolute',
+                  top: '110%',
+                  left: 0,
+                  width: '320px',
+                  maxHeight: '340px',
+                  zIndex: 100,
+                  boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+                  borderRadius: '8px',
+                  padding: '0.75rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.5rem',
+                  backdropFilter: 'blur(16px)',
+                  background: 'var(--bg-glass)'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(0,0,0,0.3)', padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                  <Search size={14} style={{ color: 'var(--text-secondary)' }} />
+                  <input 
+                    type="text"
+                    placeholder="Search tables..."
+                    value={tableSearch}
+                    onChange={e => setTableSearch(e.target.value)}
+                    autoFocus
+                    style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', fontSize: '0.85rem', width: '100%' }}
+                  />
+                  {tableSearch && (
+                    <button 
+                      onClick={() => setTableSearch('')}
+                      style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.85rem' }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: 'var(--text-secondary)', padding: '0 0.25rem' }}>
+                  <span>{filteredTables.length} tables found</span>
+                  <button 
+                    onClick={loadTables} 
+                    disabled={loadingTables}
+                    style={{ background: 'transparent', border: 'none', color: 'var(--accent-color)', cursor: 'pointer', fontSize: '0.75rem' }}
+                  >
+                    Refresh List
+                  </button>
+                </div>
+
+                <div style={{ overflowY: 'auto', maxHeight: '220px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  {filteredTables.length === 0 ? (
+                    <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                      {loadingTables ? 'Loading schema tables...' : 'No matching tables found.'}
+                    </div>
+                  ) : (
+                    filteredTables.map(t => (
+                      <button
+                        key={t}
+                        onClick={() => handleSelectTable(t)}
+                        style={{
+                          textAlign: 'left',
+                          padding: '0.45rem 0.6rem',
+                          background: selectedTable === t ? 'rgba(59, 130, 246, 0.2)' : 'transparent',
+                          color: selectedTable === t ? '#60a5fa' : 'var(--text-primary)',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontSize: '0.82rem',
+                          fontFamily: 'monospace',
+                          transition: 'background 0.15s ease',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between'
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+                        onMouseLeave={e => e.currentTarget.style.background = selectedTable === t ? 'rgba(59, 130, 246, 0.2)' : 'transparent'}
+                      >
+                        <span>{t}</span>
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', opacity: 0.7 }}>SELECT</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           {Object.entries(savedQueries).map(([name, q]) => (
             <div key={name} className="flex items-center" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
               <button 
                 className="btn" 
                 style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem', border: 'none', background: 'transparent' }}
-                onClick={() => setQuery(q)}
+                onClick={() => { setSelectedTable(''); setQuery(q); }}
                 title={q}
               >
                 {name}
