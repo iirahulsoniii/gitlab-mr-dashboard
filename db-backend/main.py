@@ -24,18 +24,45 @@ app.add_middleware(
 )
 
 class QueryRequest(BaseModel):
-    environment: str # "stage" or "prod"
+    environment: Optional[str] = "stage" # "stage" or "prod"
     query: str
     db_config: Optional[dict] = None
+    connection: Optional[dict] = None
 
 class TablesRequest(BaseModel):
-    environment: str # "stage" or "prod"
+    environment: Optional[str] = "stage" # "stage" or "prod"
     db_config: Optional[dict] = None
+    connection: Optional[dict] = None
 
-def get_db_connection(environment: str, config: Optional[dict] = None):
-    prefix = "STAGE_DB_" if environment.lower() == "stage" else "PROD_DB_"
+def get_db_connection(environment: str, config: Optional[dict] = None, connection: Optional[dict] = None):
+    # 1. If explicit connection object is provided (Multi-DB connection support)
+    if connection and connection.get('user'):
+        user = connection.get('user')
+        password = connection.get('password')
+        dsn = connection.get('dsn')
+        env = connection.get('environment') or environment or "stage"
+        prefix = "STAGE_DB_" if env.lower() == "stage" else "PROD_DB_"
+        
+        if not dsn:
+            host = os.getenv(f"{prefix}HOST")
+            port = os.getenv(f"{prefix}PORT")
+            service = os.getenv(f"{prefix}SERVICE")
+            if host and port and service:
+                dsn = oracledb.makedsn(host, int(port), service_name=service)
+                
+        if not all([user, password, dsn]):
+            conn_name = connection.get('name') or f"{env.upper()} Connection"
+            raise HTTPException(status_code=400, detail=f"Incomplete connection details for '{conn_name}'. Please verify user, password, and DSN in Settings.")
+            
+        try:
+            return oracledb.connect(user=user, password=password, dsn=dsn)
+        except Exception as e:
+            conn_name = connection.get('name') or f"{env.upper()} Connection"
+            raise HTTPException(status_code=500, detail=f"Database connection failed for '{conn_name}': {str(e)}")
+
+    prefix = "STAGE_DB_" if (environment or "").lower() == "stage" else "PROD_DB_"
     
-    # If config provided from UI payload, use it
+    # 2. If legacy config provided from UI payload, use it
     if config and environment in config and config[environment].get('user'):
         env_config = config[environment]
         user = env_config.get('user')
@@ -58,7 +85,7 @@ def get_db_connection(environment: str, config: Optional[dict] = None):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Database connection failed (via UI config): {str(e)}")
 
-    # Fallback to .env logic if UI config not provided
+    # 3. Fallback to .env logic if UI config not provided
     user = os.getenv(f"{prefix}USER")
     password = os.getenv(f"{prefix}PASSWORD")
     host = os.getenv(f"{prefix}HOST")
@@ -79,7 +106,7 @@ def get_db_connection(environment: str, config: Optional[dict] = None):
 async def get_tables(req: TablesRequest):
     conn = None
     try:
-        conn = get_db_connection(req.environment, req.db_config)
+        conn = get_db_connection(req.environment, req.db_config, req.connection)
         cur = conn.cursor()
         # Fetch user_tables
         cur.execute("SELECT table_name FROM user_tables ORDER BY table_name")
@@ -124,7 +151,7 @@ async def execute_query(req: QueryRequest):
         
     conn = None
     try:
-        conn = get_db_connection(req.environment, req.db_config)
+        conn = get_db_connection(req.environment, req.db_config, req.connection)
         cur = conn.cursor()
         cur.execute(cleaned_query)
         

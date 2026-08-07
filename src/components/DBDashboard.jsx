@@ -22,7 +22,32 @@ ORDER BY otp_id DESC
 FETCH FIRST 10 ROWS ONLY`;
 
 export default function DBDashboard({ dbConfig }) {
-  const [environment, setEnvironment] = useState(() => localStorage.getItem('db_env') || 'stage');
+  const connections = useMemo(() => {
+    if (Array.isArray(dbConfig?.connections)) return dbConfig.connections;
+    if (Array.isArray(dbConfig)) return dbConfig;
+    const conns = [];
+    if (dbConfig?.stage && (dbConfig.stage.user || dbConfig.stage.dsn)) {
+      conns.push({ id: 'stage-default', name: 'Stage DB (Default)', environment: 'stage', ...dbConfig.stage });
+    }
+    if (dbConfig?.prod && (dbConfig.prod.user || dbConfig.prod.dsn)) {
+      conns.push({ id: 'prod-default', name: 'Prod DB (Default)', environment: 'prod', ...dbConfig.prod });
+    }
+    if (conns.length === 0) {
+      conns.push({ id: 'stage-default', name: 'Stage DB', environment: 'stage', user: '', dsn: '' });
+    }
+    return conns;
+  }, [dbConfig]);
+
+  const [activeConnId, setActiveConnId] = useState(() => {
+    return localStorage.getItem('db_active_conn_id') || (connections.length > 0 ? connections[0].id : 'stage-default');
+  });
+
+  const activeConn = useMemo(() => {
+    return connections.find(c => c.id === activeConnId) || connections[0] || { environment: 'stage' };
+  }, [connections, activeConnId]);
+
+  const environment = activeConn.environment || 'stage';
+
   const [query, setQuery] = useState(() => localStorage.getItem('db_query') || PAYMENT_QUERY);
   const [savedQueries, setSavedQueries] = useState(() => JSON.parse(localStorage.getItem('db_saved_queries') || '{}'));
   const [tables, setTables] = useState([]);
@@ -39,9 +64,9 @@ export default function DBDashboard({ dbConfig }) {
   const dropdownRef = useRef(null);
 
   useEffect(() => {
-    localStorage.setItem('db_env', environment);
+    localStorage.setItem('db_active_conn_id', activeConnId);
     loadTables();
-  }, [environment]);
+  }, [activeConnId, activeConn]);
 
   useEffect(() => {
     localStorage.setItem('db_query', query);
@@ -68,7 +93,11 @@ export default function DBDashboard({ dbConfig }) {
       const res = await fetch('/db-api/api/tables', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ environment, db_config: dbConfig })
+        body: JSON.stringify({ 
+          environment: activeConn.environment || 'stage', 
+          connection: activeConn,
+          db_config: dbConfig 
+        })
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.tables) {
@@ -133,7 +162,12 @@ FETCH FIRST 10 ROWS ONLY`;
       const res = await fetch('/db-api/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ environment, query, db_config: dbConfig }),
+        body: JSON.stringify({ 
+          environment: activeConn.environment || 'stage', 
+          query, 
+          connection: activeConn,
+          db_config: dbConfig 
+        }),
         signal: abortControllerRef.current.signal
       });
       
@@ -156,7 +190,7 @@ FETCH FIRST 10 ROWS ONLY`;
         if (msg.includes('Failed to fetch') || msg.includes('Proxy Error') || msg.includes('500') || msg.includes('502')) {
           setError(`Cannot reach backend server. Please verify FastAPI is running at http://localhost:8000 (run: npm run dev). ${msg}`);
         } else if (msg.includes('DPY-6005') || msg.includes('DPY-6000') || msg.includes('Listener refused connection')) {
-          setError(`Oracle Database connection failed (${msg}). Please verify your VPN is connected and credentials/DSN in Settings or .env are valid.`);
+          setError(`Oracle Database connection failed for '${activeConn.name || environment}' (${msg}). Please verify your VPN is connected and credentials/DSN in Settings are valid.`);
         } else {
           setError(msg);
         }
@@ -166,40 +200,46 @@ FETCH FIRST 10 ROWS ONLY`;
     }
   };
 
-  const filteredData = useMemo(() => {
-    if (!result?.data) return [];
-    if (!search.trim()) return result.data;
-    
-    const lowerSearch = search.toLowerCase();
-    return result.data.filter(row => 
-      Object.values(row).some(val => 
-        val && String(val).toLowerCase().includes(lowerSearch)
-      )
-    );
-  }, [result, search]);
-
   return (
     <div className="flex-col gap-6" style={{ marginTop: '1rem' }}>
-      <div className="flex justify-between items-center glass" style={{ padding: '1rem 1.5rem' }}>
-        <h2 className="flex items-center gap-2" style={{ margin: 0, fontSize: '1.25rem' }}>
-          <Database size={20} className="text-accent" /> Query Runner
-        </h2>
+      <div className="flex justify-between items-center glass" style={{ padding: '1rem 1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+        <div className="flex items-center gap-3">
+          <h2 className="flex items-center gap-2" style={{ margin: 0, fontSize: '1.25rem' }}>
+            <Database size={20} className="text-accent" /> Query Runner
+          </h2>
+          <span className="tag" style={{ background: activeConn.environment === 'prod' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.2)', color: activeConn.environment === 'prod' ? '#ef4444' : '#60a5fa', fontWeight: 600 }}>
+            {activeConn.name || activeConn.environment?.toUpperCase()}
+          </span>
+        </div>
         
-        <div className="flex gap-2">
-          <button 
-            className={`btn ${environment === 'stage' ? 'btn-primary' : ''}`} 
-            onClick={() => setEnvironment('stage')}
-            style={environment !== 'stage' ? { background: 'transparent' } : {}}
-          >
-            <Server size={16} /> Stage
-          </button>
-          <button 
-            className={`btn ${environment === 'prod' ? 'btn-primary' : ''}`} 
-            onClick={() => setEnvironment('prod')}
-            style={environment !== 'prod' ? { background: 'transparent', borderColor: 'var(--danger-color)', color: 'var(--danger-color)' } : { background: 'var(--danger-color)' }}
-          >
-            <Server size={16} /> Production
-          </button>
+        {/* Multi-Database Connection Selector */}
+        <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Connection:</span>
+          {connections.map(conn => {
+            const isActive = conn.id === activeConnId;
+            const isProd = conn.environment === 'prod';
+            return (
+              <button 
+                key={conn.id}
+                className={`btn ${isActive ? (isProd ? '' : 'btn-primary') : ''}`}
+                onClick={() => {
+                  setActiveConnId(conn.id);
+                  setSelectedTable('');
+                }}
+                style={{
+                  fontSize: '0.85rem',
+                  padding: '0.35rem 0.85rem',
+                  background: isActive ? (isProd ? 'var(--danger-color)' : undefined) : 'transparent',
+                  borderColor: isProd ? 'var(--danger-color)' : (isActive ? undefined : 'var(--border-color)'),
+                  color: isProd && !isActive ? 'var(--danger-color)' : undefined
+                }}
+                title={conn.dsn ? `DSN: ${conn.dsn}` : conn.name}
+              >
+                <Server size={14} />
+                {conn.name || (isProd ? 'Production' : 'Stage')}
+              </button>
+            );
+          })}
         </div>
       </div>
 
