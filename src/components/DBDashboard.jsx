@@ -65,8 +65,7 @@ export default function DBDashboard({ dbConfig }) {
 
   useEffect(() => {
     localStorage.setItem('db_active_conn_id', activeConnId);
-    loadTables();
-  }, [activeConnId, activeConn]);
+  }, [activeConnId]);
 
   useEffect(() => {
     localStorage.setItem('db_query', query);
@@ -88,37 +87,35 @@ export default function DBDashboard({ dbConfig }) {
   }, []);
 
   const loadTables = async () => {
+    // Only attempt if connection details or .env are present
     setLoadingTables(true);
-    let attempts = 0;
-    while (attempts < 5) {
-      attempts++;
-      try {
-        const res = await fetch('/db-api/api/tables', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            environment: activeConn.environment || 'stage', 
-            connection: activeConn,
-            db_config: dbConfig 
-          })
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.tables) {
-          setTables(data.tables);
-          break;
-        }
-        const errDetail = data.detail || '';
-        if (errDetail.includes('DPY-6005') || errDetail.includes('Listener refused connection') || errDetail.includes('12516') || errDetail.includes('12520')) {
-          await new Promise(r => setTimeout(r, 2000));
-          continue;
-        }
-        break;
-      } catch (e) {
-        console.warn('Could not load tables:', e);
-        break;
+    try {
+      const res = await fetch('/db-api/api/tables', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          environment: activeConn.environment || 'stage', 
+          connection: activeConn,
+          db_config: dbConfig 
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.tables) {
+        setTables(data.tables);
       }
+    } catch (e) {
+      console.warn('Could not load tables:', e);
+    } finally {
+      setLoadingTables(false);
     }
-    setLoadingTables(false);
+  };
+
+  const handleToggleTableDropdown = () => {
+    const willOpen = !isTableDropdownOpen;
+    setIsTableDropdownOpen(willOpen);
+    if (willOpen && tables.length === 0) {
+      loadTables();
+    }
   };
 
   const handleSelectTable = (tableName) => {
@@ -313,7 +310,7 @@ FETCH FIRST 10 ROWS ONLY`;
           <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
             <button 
               className="btn" 
-              onClick={() => setIsTableDropdownOpen(prev => !prev)}
+              onClick={handleToggleTableDropdown}
               style={{ 
                 padding: '0.25rem 0.75rem', 
                 fontSize: '0.875rem', 
