@@ -127,6 +127,7 @@ FETCH FIRST 10 ROWS ONLY`;
     setError(null);
     setSuccessMsg(null);
     setResult(null);
+    setSearch('');
 
     try {
       const res = await fetch('/db-api/api/query', {
@@ -458,8 +459,23 @@ FETCH FIRST 10 ROWS ONLY`;
                 </tbody>
               </table>
             ) : (
-              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                No results found.
+              <div style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem' }}>
+                {result.data.length === 0 ? (
+                  <>
+                    <Database size={32} style={{ opacity: 0.4 }} />
+                    <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>Table is currently empty</div>
+                    <div style={{ fontSize: '0.85rem' }}>
+                      Query executed successfully, but <strong>WORKFLOW_STEP_STATE</strong> contains <strong>0 rows</strong> in the <strong>{environment.toUpperCase()}</strong> database.
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>No rows match your filter "<strong>{search}</strong>" (out of {result.data.length} rows).</div>
+                    <button className="btn" onClick={() => setSearch('')} style={{ fontSize: '0.8rem', padding: '0.25rem 0.75rem' }}>
+                      Clear Filter
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>

@@ -9,6 +9,9 @@ from pydantic import BaseModel
 
 load_dotenv()
 
+# Configure oracledb to fetch LOBs (CLOB, BLOB) directly as strings/bytes
+oracledb.defaults.fetch_lobs = False
+
 app = FastAPI()
 
 # Allow CORS for the Vite frontend
