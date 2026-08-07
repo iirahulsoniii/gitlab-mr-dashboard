@@ -200,6 +200,18 @@ FETCH FIRST 10 ROWS ONLY`;
     }
   };
 
+  const filteredData = useMemo(() => {
+    if (!result?.data) return [];
+    if (!search.trim()) return result.data;
+    
+    const lowerSearch = search.toLowerCase();
+    return result.data.filter(row => 
+      Object.values(row).some(val => 
+        val && String(val).toLowerCase().includes(lowerSearch)
+      )
+    );
+  }, [result, search]);
+
   return (
     <div className="flex-col gap-6" style={{ marginTop: '1rem' }}>
       <div className="flex justify-between items-center glass" style={{ padding: '1rem 1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
