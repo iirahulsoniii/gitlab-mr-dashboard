@@ -490,8 +490,8 @@ FETCH FIRST 10 ROWS ONLY`;
                   {filteredData.map((row, idx) => (
                     <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
                       {result.columns.map(col => (
-                        <td key={col} style={{ padding: '0.75rem 1rem', color: 'var(--text-primary)' }}>
-                          {row[col] ?? <span style={{ color: 'var(--text-secondary)' }}>null</span>}
+                        <td key={col} style={{ padding: '0.75rem 1rem', color: 'var(--text-primary)', verticalAlign: 'top' }}>
+                          {renderCellContent(row[col])}
                         </td>
                       ))}
                     </tr>
@@ -505,7 +505,7 @@ FETCH FIRST 10 ROWS ONLY`;
                     <Database size={32} style={{ opacity: 0.4 }} />
                     <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>Table is currently empty</div>
                     <div style={{ fontSize: '0.85rem' }}>
-                      Query executed successfully, but <strong>WORKFLOW_STEP_STATE</strong> contains <strong>0 rows</strong> in the <strong>{environment.toUpperCase()}</strong> database.
+                      Query executed successfully, but returned <strong>0 rows</strong> in <strong>{activeConn.name || environment.toUpperCase()}</strong>.
                     </div>
                   </>
                 ) : (
