@@ -233,6 +233,51 @@ FETCH FIRST 10 ROWS ONLY`;
     setLoading(false);
   };
 
+  const renderCellContent = (val) => {
+    if (val === null || val === undefined) {
+      return <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '0.8rem' }}>null</span>;
+    }
+    
+    if (typeof val === 'object') {
+      return (
+        <pre style={{ margin: 0, fontSize: '0.75rem', maxWidth: '380px', maxHeight: '120px', overflow: 'auto', background: 'rgba(0,0,0,0.3)', padding: '0.35rem 0.5rem', borderRadius: '4px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+          {JSON.stringify(val, null, 2)}
+        </pre>
+      );
+    }
+    
+    const strVal = String(val);
+    
+    // Automatically detect JSON payloads (e.g. OUTPUT_ATTRS) and provide interactive viewer
+    if ((strVal.startsWith('{') && strVal.endsWith('}')) || (strVal.startsWith('[') && strVal.endsWith(']'))) {
+      try {
+        const parsed = JSON.parse(strVal);
+        return (
+          <details style={{ cursor: 'pointer', maxWidth: '420px' }}>
+            <summary style={{ color: '#60a5fa', fontSize: '0.8rem', outline: 'none', userSelect: 'none' }}>
+              {'{ }'} JSON Payload ({Array.isArray(parsed) ? `${parsed.length} items` : `${Object.keys(parsed).length} keys`})
+            </summary>
+            <pre style={{ margin: '0.25rem 0 0', fontSize: '0.75rem', maxHeight: '180px', overflow: 'auto', background: 'rgba(0,0,0,0.4)', border: '1px solid var(--border-color)', padding: '0.5rem', borderRadius: '6px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+              {JSON.stringify(parsed, null, 2)}
+            </pre>
+          </details>
+        );
+      } catch (e) {
+        // Not valid JSON, render as plain string
+      }
+    }
+    
+    if (strVal.length > 80) {
+      return (
+        <div style={{ maxWidth: '320px', maxHeight: '90px', overflowY: 'auto', wordBreak: 'break-word', whiteSpace: 'pre-wrap', fontSize: '0.82rem' }}>
+          {strVal}
+        </div>
+      );
+    }
+    
+    return <span style={{ wordBreak: 'break-word' }}>{strVal}</span>;
+  };
+
   const filteredData = useMemo(() => {
     if (!result?.data) return [];
     if (!search.trim()) return result.data;
