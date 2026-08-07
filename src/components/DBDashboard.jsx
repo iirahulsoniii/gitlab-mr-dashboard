@@ -89,25 +89,36 @@ export default function DBDashboard({ dbConfig }) {
 
   const loadTables = async () => {
     setLoadingTables(true);
-    try {
-      const res = await fetch('/db-api/api/tables', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          environment: activeConn.environment || 'stage', 
-          connection: activeConn,
-          db_config: dbConfig 
-        })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.tables) {
-        setTables(data.tables);
+    let attempts = 0;
+    while (attempts < 5) {
+      attempts++;
+      try {
+        const res = await fetch('/db-api/api/tables', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            environment: activeConn.environment || 'stage', 
+            connection: activeConn,
+            db_config: dbConfig 
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.tables) {
+          setTables(data.tables);
+          break;
+        }
+        const errDetail = data.detail || '';
+        if (errDetail.includes('DPY-6005') || errDetail.includes('Listener refused connection') || errDetail.includes('12516') || errDetail.includes('12520')) {
+          await new Promise(r => setTimeout(r, 2000));
+          continue;
+        }
+        break;
+      } catch (e) {
+        console.warn('Could not load tables:', e);
+        break;
       }
-    } catch (e) {
-      console.warn('Could not load tables:', e);
-    } finally {
-      setLoadingTables(false);
     }
+    setLoadingTables(false);
   };
 
   const handleSelectTable = (tableName) => {
@@ -158,46 +169,71 @@ FETCH FIRST 10 ROWS ONLY`;
     setResult(null);
     setSearch('');
 
-    try {
-      const res = await fetch('/db-api/api/query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          environment: activeConn.environment || 'stage', 
-          query, 
-          connection: activeConn,
-          db_config: dbConfig 
-        }),
-        signal: abortControllerRef.current.signal
-      });
-      
-      const data = await res.json().catch(() => ({}));
-      
-      if (!res.ok) {
-        throw new Error(data.detail || `Server returned error (${res.status} ${res.statusText}). Make sure the backend is running on port 8000.`);
-      }
+    let attempt = 0;
+    while (true) {
+      attempt++;
+      try {
+        const res = await fetch('/db-api/api/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            environment: activeConn.environment || 'stage', 
+            query, 
+            connection: activeConn,
+            db_config: dbConfig 
+          }),
+          signal: abortControllerRef.current.signal
+        });
+        
+        const data = await res.json().catch(() => ({}));
+        
+        if (!res.ok) {
+          throw new Error(data.detail || `Server returned error (${res.status} ${res.statusText}). Make sure the backend is running on port 8000.`);
+        }
 
-      if (data.data) {
-        setResult({ columns: data.columns, data: data.data });
-      } else {
-        setSuccessMsg(data.message || 'Query executed successfully.');
-      }
-    } catch (err) {
-      if (err.name === 'AbortError') {
-        setError('Query execution cancelled.');
-      } else {
-        const msg = err.message || '';
-        if (msg.includes('Failed to fetch') || msg.includes('Proxy Error') || msg.includes('500') || msg.includes('502')) {
-          setError(`Cannot reach backend server. Please verify FastAPI is running at http://localhost:8000 (run: npm run dev). ${msg}`);
-        } else if (msg.includes('DPY-6005') || msg.includes('DPY-6000') || msg.includes('Listener refused connection')) {
-          setError(`Oracle Database connection failed for '${activeConn.name || environment}' (${msg}). Please verify your VPN is connected and credentials/DSN in Settings are valid.`);
+        if (data.data) {
+          setResult({ columns: data.columns, data: data.data });
         } else {
-          setError(msg);
+          setSuccessMsg(data.message || 'Query executed successfully.');
+        }
+        setError(null);
+        break; // Successfully connected and executed!
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          setError('Query execution cancelled.');
+          break;
+        }
+        
+        const msg = err.message || '';
+        const isListenerRefused = msg.includes('DPY-6005') || msg.includes('DPY-6000') || msg.includes('Listener refused connection') || msg.includes('12516') || msg.includes('12520');
+        
+        if (isListenerRefused) {
+          setError(`Oracle Listener busy (ORA-12516 / DPY-6005). Retrying in 2 seconds... (Attempt #${attempt})`);
+          // Wait 2 seconds before retrying (respecting cancel/abort)
+          await new Promise((resolve) => {
+            const timeoutId = setTimeout(resolve, 2000);
+            if (abortControllerRef.current?.signal) {
+              abortControllerRef.current.signal.addEventListener('abort', () => {
+                clearTimeout(timeoutId);
+                resolve();
+              }, { once: true });
+            }
+          });
+          if (abortControllerRef.current?.signal?.aborted) {
+            setError('Query execution cancelled.');
+            break;
+          }
+        } else {
+          if (msg.includes('Failed to fetch') || msg.includes('Proxy Error') || msg.includes('500') || msg.includes('502')) {
+            setError(`Cannot reach backend server. Please verify FastAPI is running at http://localhost:8000 (run: npm run dev). ${msg}`);
+          } else {
+            setError(msg);
+          }
+          break;
         }
       }
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   };
 
   const filteredData = useMemo(() => {
