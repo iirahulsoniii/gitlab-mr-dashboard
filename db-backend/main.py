@@ -100,15 +100,33 @@ async def get_tables(req: TablesRequest):
 
 @app.post("/api/query")
 async def execute_query(req: QueryRequest):
-    if not req.query.strip():
+    cleaned_query = req.query.strip()
+    if not cleaned_query:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
+
+    # Strict Safety Guardrail: Allow ONLY read-only queries (SELECT, WITH, EXPLAIN, DESCRIBE)
+    first_word = cleaned_query.split()[0].upper() if cleaned_query.split() else ""
+    if first_word not in ("SELECT", "WITH", "EXPLAIN", "DESC"):
+        raise HTTPException(
+            status_code=403, 
+            detail="Safety Guardrail: Modifying queries (DELETE, UPDATE, INSERT, DROP, TRUNCATE, ALTER) are strictly prohibited. Only read-only queries (SELECT) are permitted."
+        )
+
+    # Double check for dangerous destructive keyword tokens
+    dangerous_keywords = ["DELETE ", "UPDATE ", "DROP ", "TRUNCATE ", "ALTER ", "INSERT ", "MERGE ", "GRANT ", "REVOKE "]
+    upper_query = cleaned_query.upper()
+    for kw in dangerous_keywords:
+        if kw in upper_query and not upper_query.startswith("SELECT") and not upper_query.startswith("WITH"):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Safety Guardrail: '{kw.strip()}' statements are strictly forbidden."
+            )
         
-    # Security note: Running arbitrary queries is dangerous in a real production app!
     conn = None
     try:
         conn = get_db_connection(req.environment, req.db_config)
         cur = conn.cursor()
-        cur.execute(req.query)
+        cur.execute(cleaned_query)
         
         # Determine if it's a SELECT query that returns rows
         if cur.description:
@@ -120,15 +138,12 @@ async def execute_query(req: QueryRequest):
             for row in rows:
                 row_dict = {}
                 for i, value in enumerate(row):
-                    # Handle datetimes and LOBs appropriately if needed
                     row_dict[columns[i]] = str(value) if value is not None else None
                 result.append(row_dict)
                 
             return {"columns": columns, "data": result, "status": "success"}
         else:
-            # For UPDATE/INSERT/DELETE or DDL
-            conn.commit()
-            return {"status": "success", "message": f"{cur.rowcount} row(s) affected."}
+            return {"columns": [], "data": [], "status": "success", "message": "Query executed with 0 rows returned."}
             
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Query execution failed: {str(e)}")
