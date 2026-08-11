@@ -8,10 +8,12 @@ export default function JiraIssuesDashboard({ config }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
+  const [assigneeScope, setAssigneeScope] = useState('my'); // 'my', 'all', 'unassigned', 'custom'
+  const [assignee, setAssignee] = useState('');
   const [daysFilter, setDaysFilter] = useState(30);
   const [priorityFilter, setPriorityFilter] = useState('all');
   const [fixVersionFilter, setFixVersionFilter] = useState('all');
-  const [assignee, setAssignee] = useState('');
+  const [includeClosed, setIncludeClosed] = useState(false);
 
   useEffect(() => {
     if (config.email && config.token) {
@@ -19,13 +21,13 @@ export default function JiraIssuesDashboard({ config }) {
     } else {
       setError('Please configure Jira Email and Token in Settings.');
     }
-  }, [config, daysFilter]);
+  }, [config, daysFilter, includeClosed, assigneeScope]);
 
   const loadData = async () => {
     setLoading(true);
     setError('');
     try {
-      const data = await fetchAssignedIssues(config, daysFilter, assignee);
+      const data = await fetchAssignedIssues(config, daysFilter, assignee, includeClosed, assigneeScope);
       setIssues(data);
     } catch (err) {
       setError(err.message);
@@ -83,17 +85,49 @@ export default function JiraIssuesDashboard({ config }) {
     <div className="flex-col gap-6" style={{ marginTop: '1rem' }}>
       <div className="flex justify-between items-center glass" style={{ padding: '1rem 1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div className="flex gap-4 items-center" style={{ flexWrap: 'wrap' }}>
-          <div className="flex items-center gap-2" style={{ background: 'rgba(255,255,255,0.05)', padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-            <User size={16} style={{ color: 'var(--text-secondary)' }} />
-            <input 
-              type="text" 
-              placeholder="Assignee (leave blank for you)" 
-              value={assignee}
-              onChange={e => setAssignee(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && loadData()}
-              style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', width: '220px', fontSize: '0.9rem' }}
-            />
+          {/* Assignee Scope Selector */}
+          <div className="flex gap-2 items-center" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+            Assignee:
+            <select 
+              className="btn" 
+              value={assigneeScope} 
+              onChange={(e) => {
+                setAssigneeScope(e.target.value);
+                if (e.target.value !== 'custom') {
+                  setAssignee('');
+                }
+              }}
+            >
+              <option value="my">Assigned to Me</option>
+              <option value="all">All Users (Anyone)</option>
+              <option value="unassigned">Unassigned Only</option>
+              <option value="custom">Specific Person...</option>
+            </select>
           </div>
+
+          {/* Search box when specific person selected */}
+          {assigneeScope === 'custom' && (
+            <div className="flex items-center gap-2" style={{ background: 'rgba(255,255,255,0.05)', padding: '0.4rem 0.8rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+              <User size={16} style={{ color: 'var(--text-secondary)' }} />
+              <input 
+                type="text" 
+                placeholder="Enter exact full name..." 
+                value={assignee}
+                autoFocus
+                onChange={e => setAssignee(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && loadData()}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', width: '200px', fontSize: '0.85rem' }}
+              />
+              <button 
+                type="button" 
+                onClick={loadData} 
+                className="btn" 
+                style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', background: 'var(--accent-color)', color: '#fff', border: 'none' }}
+              >
+                Search
+              </button>
+            </div>
+          )}
 
           <div className="flex gap-2 items-center" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
             Updated in last: 
@@ -102,6 +136,7 @@ export default function JiraIssuesDashboard({ config }) {
               <option value={14}>14 Days</option>
               <option value={30}>30 Days</option>
               <option value={90}>90 Days</option>
+              <option value={365}>1 Year</option>
             </select>
           </div>
           
@@ -121,6 +156,15 @@ export default function JiraIssuesDashboard({ config }) {
               {fixVersions.map(v => <option key={v} value={v}>{v}</option>)}
             </select>
           </div>
+
+          <label className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', cursor: 'pointer' }}>
+            <input 
+              type="checkbox" 
+              checked={includeClosed} 
+              onChange={e => setIncludeClosed(e.target.checked)} 
+            />
+            Include Closed/Done
+          </label>
         </div>
         
         <button className="btn" onClick={loadData} disabled={loading}>
@@ -137,7 +181,7 @@ export default function JiraIssuesDashboard({ config }) {
         <div className="flex-col gap-4">
           {filteredIssues.length === 0 ? (
             <div className="glass" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-              No assigned issues found for the selected criteria.
+              No issues found for the selected criteria.
             </div>
           ) : (
             filteredIssues.map(issue => (
@@ -147,6 +191,13 @@ export default function JiraIssuesDashboard({ config }) {
                     <div className="flex items-center gap-3" style={{ flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--text-primary)' }}>{issue.key}</span>
                       <span className="tag" style={{ background: 'rgba(255,255,255,0.1)', color: 'var(--text-primary)' }}>{issue.fields?.status?.name}</span>
+                      
+                      {/* Assignee Badge */}
+                      <span className="tag" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                        <User size={12} style={{ color: 'var(--accent-color)' }} />
+                        {issue.fields?.assignee?.displayName || 'Unassigned'}
+                      </span>
+
                       <span className="tag" style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${getPriorityColor(issue.fields?.priority?.name)}`, color: getPriorityColor(issue.fields?.priority?.name) }}>
                         {issue.fields?.priority?.name || 'No Priority'}
                       </span>

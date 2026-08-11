@@ -261,33 +261,95 @@ export async function fetchJiraIssue(config, issueKey) {
   return { summary: data.fields?.summary || 'Unknown Ticket' };
 }
 
-export async function fetchAssignedIssues(config, days = 30, assignee = '') {
+export async function fetchAssignedIssues(config, days = 30, assignee = '', includeClosed = false, assigneeScope = 'my') {
   if (!config.email || !config.token) {
     throw new Error('Jira Email and Token are required.');
   }
 
   const authString = btoa(`${config.email}:${config.token}`);
-  // Use fuzzy match ~ if user types a custom assignee name, otherwise use currentUser()
-  const assigneeJQL = assignee.trim() ? `assignee ~ "${assignee.trim()}"` : `assignee = currentUser()`;
-  const jqlQuery = `${assigneeJQL} AND status NOT IN ("Reject", "Rejected", "Closed", "Done", "Resolved", "Ready for production", "Cancelled") AND updated >= '-${days}d' ORDER BY priority DESC, created DESC`;
+  const headers = {
+    'Authorization': `Basic ${authString}`,
+    'Accept': 'application/json',
+    'Content-Type': 'application/json'
+  };
+
+  let assigneeJQL = '';
+
+  if (assigneeScope === 'all') {
+    // No assignee filter: view issues for all team members
+    assigneeJQL = '';
+  } else if (assigneeScope === 'unassigned') {
+    assigneeJQL = 'assignee IS EMPTY';
+  } else if (assigneeScope === 'custom' || (assignee && assignee.trim())) {
+    const query = assignee.trim();
+    try {
+      const userRes = await fetch(`/jira-api/rest/api/3/user/search?query=${encodeURIComponent(query)}`, {
+        headers: {
+          'Authorization': `Basic ${authString}`,
+          'Accept': 'application/json'
+        }
+      });
+      if (userRes.ok) {
+        const users = await userRes.json();
+        if (Array.isArray(users) && users.length > 0) {
+          const qLower = query.toLowerCase();
+          // 1. Strict exact match on displayName or email
+          let matched = users.filter(u => 
+            u.displayName?.toLowerCase() === qLower || 
+            u.emailAddress?.toLowerCase() === qLower
+          );
+          // 2. If no exact match, filter users containing all words of the searched name
+          if (matched.length === 0) {
+            const queryWords = qLower.split(/\s+/).filter(Boolean);
+            matched = users.filter(u => {
+              const dName = (u.displayName || '').toLowerCase();
+              return queryWords.every(w => dName.includes(w));
+            });
+          }
+          // 3. Fallback: Take top 1 match from Jira user search ranking
+          if (matched.length === 0) {
+            matched = [users[0]];
+          }
+          const accountIds = matched.map(u => `"${u.accountId}"`).join(', ');
+          assigneeJQL = `assignee IN (${accountIds})`;
+        } else {
+          assigneeJQL = `assignee = "${query}"`;
+        }
+      } else {
+        assigneeJQL = `assignee = "${query}"`;
+      }
+    } catch (e) {
+      assigneeJQL = `assignee = "${query}"`;
+    }
+  } else {
+    // Default: 'my'
+    assigneeJQL = 'assignee = currentUser()';
+  }
+
+  const statusJQL = includeClosed 
+    ? '' 
+    : 'status NOT IN ("Reject", "Rejected", "Closed", "Done", "Resolved", "Ready for production", "Cancelled")';
+
+  const daysJQL = days > 0 ? `updated >= '-${days}d'` : '';
+
+  const conditions = [assigneeJQL, statusJQL, daysJQL].filter(Boolean).join(' AND ');
+  const jqlQuery = conditions ? `${conditions} ORDER BY priority DESC, created DESC` : 'ORDER BY priority DESC, created DESC';
   
   const payload = {
     jql: jqlQuery,
-    fields: ["summary", "priority", "status", "created", "updated", "issuetype", "fixVersions"],
+    fields: ["summary", "priority", "status", "created", "updated", "issuetype", "fixVersions", "assignee"],
     maxResults: 100
   };
 
   const response = await fetch('/jira-api/rest/api/3/search/jql', {
     method: 'POST',
-    headers: {
-      'Authorization': `Basic ${authString}`,
-      'Content-Type': 'application/json'
-    },
+    headers,
     body: JSON.stringify(payload)
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch assigned issues: ${response.statusText}`);
+    const errTxt = await response.text();
+    throw new Error(`Failed to fetch assigned issues: ${response.status} - ${errTxt}`);
   }
 
   const data = await response.json();
