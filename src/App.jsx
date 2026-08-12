@@ -6,7 +6,8 @@ import JiraList from './components/JiraList';
 import JiraWorklogDashboard from './components/JiraWorklogDashboard';
 import DBDashboard from './components/DBDashboard';
 import JiraIssuesDashboard from './components/JiraIssuesDashboard';
-import { Settings, Database, ListFilter, FileText, CalendarClock, Code2, CheckSquare } from 'lucide-react';
+import PlannedReleaseDashboard from './components/PlannedReleaseDashboard';
+import { Settings, Database, ListFilter, FileText, CalendarClock, Code2, CheckSquare, Rocket } from 'lucide-react';
 import { fetchMergeRequests } from './api';
 
 const DEFAULT_FILTERS = {
@@ -251,6 +252,13 @@ function App() {
           </button>
           <button 
             className="btn" 
+            style={{ border: 'none', background: activeView === 'planned-release' ? 'var(--surface-color-light)' : 'transparent', color: activeView === 'planned-release' ? 'var(--accent-color)' : 'var(--text-secondary)' }}
+            onClick={() => setActiveView('planned-release')}
+          >
+            <Rocket size={18} /> Planned Release
+          </button>
+          <button 
+            className="btn" 
             style={{ border: 'none', background: activeView === 'db' ? 'var(--surface-color-light)' : 'transparent', color: activeView === 'db' ? 'var(--accent-color)' : 'var(--text-secondary)' }}
             onClick={() => setActiveView('db')}
           >
@@ -262,7 +270,7 @@ function App() {
       <header className="flex justify-between items-center" style={{ marginBottom: '2rem' }}>
         <div className="flex-col gap-2">
           <h1 style={{ margin: 0, background: 'linear-gradient(45deg, var(--accent-color), #8b5cf6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            {activeView === 'mr' ? 'Merge Request Dashboard' : activeView === 'jira' ? 'Jira Worklog Dashboard' : activeView === 'jira-issues' ? 'Jira Assigned Issues' : 'Database Dashboard'}
+            {activeView === 'mr' ? 'Merge Request Dashboard' : activeView === 'jira' ? 'Jira Worklog Dashboard' : activeView === 'jira-issues' ? 'Jira Assigned Issues' : activeView === 'planned-release' ? 'Planned Releases' : 'Database Dashboard'}
           </h1>
           
           {activeView === 'mr' && instances.length > 0 && (
@@ -325,6 +333,8 @@ function App() {
         <JiraWorklogDashboard config={jiraConfig} />
       ) : activeView === 'jira-issues' ? (
         <JiraIssuesDashboard config={jiraConfig} />
+      ) : activeView === 'planned-release' ? (
+        <PlannedReleaseDashboard config={jiraConfig} />
       ) : (
         <DBDashboard dbConfig={dbConfig} />
       )}

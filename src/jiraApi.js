@@ -261,6 +261,89 @@ export async function fetchJiraIssue(config, issueKey) {
   return { summary: data.fields?.summary || 'Unknown Ticket' };
 }
 
+export async function fetchJiraIssueDetails(config, issueKey) {
+  if (!config.email || !config.token) {
+    throw new Error('Jira Email and Token are required.');
+  }
+  const authString = btoa(`${config.email}:${config.token}`);
+  const response = await fetch(`/jira-api/rest/api/3/issue/${issueKey}?fields=summary,status,assignee,priority,issuetype,fixVersions,updated`, {
+    headers: {
+      'Authorization': `Basic ${authString}`,
+      'Accept': 'application/json'
+    }
+  });
+  
+  if (!response.ok) {
+    const errTxt = await response.text().catch(() => '');
+    throw new Error(`Ticket ${issueKey} not found: ${response.statusText} ${errTxt}`);
+  }
+  
+  const data = await response.json();
+  return {
+    key: data.key,
+    summary: data.fields?.summary || 'No Title',
+    status: data.fields?.status?.name || 'Unknown',
+    statusCategory: data.fields?.status?.statusCategory?.key || 'indeterminate',
+    assignee: data.fields?.assignee?.displayName || 'Unassigned',
+    assigneeEmail: data.fields?.assignee?.emailAddress || '',
+    assigneeAvatar: data.fields?.assignee?.avatarUrls?.['24x24'] || data.fields?.assignee?.avatarUrls?.['48x48'] || '',
+    priority: data.fields?.priority?.name || 'Medium',
+    issueType: data.fields?.issuetype?.name || 'Task',
+    fixVersions: (data.fields?.fixVersions || []).map(v => v.name),
+    updated: data.fields?.updated || new Date().toISOString()
+  };
+}
+
+export async function fetchBatchJiraIssues(config, issueKeys) {
+  if (!issueKeys || issueKeys.length === 0) return [];
+  if (!config.email || !config.token) {
+    throw new Error('Jira Email and Token are required.');
+  }
+  
+  const cleanKeys = Array.from(new Set(issueKeys.map(k => k.trim().toUpperCase()))).filter(Boolean);
+  if (cleanKeys.length === 0) return [];
+
+  const authString = btoa(`${config.email}:${config.token}`);
+  const headers = {
+    'Authorization': `Basic ${authString}`,
+    'Accept': 'application/json',
+    'Content-Type': 'application/json'
+  };
+
+  const jqlQuery = `key IN (${cleanKeys.map(k => `"${k}"`).join(', ')})`;
+  const payload = {
+    jql: jqlQuery,
+    fields: ["summary", "status", "assignee", "priority", "issuetype", "fixVersions", "updated"],
+    maxResults: 100
+  };
+
+  const response = await fetch('/jira-api/rest/api/3/search/jql', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const errTxt = await response.text().catch(() => '');
+    throw new Error(`Failed to fetch batch issues: ${response.status} - ${errTxt}`);
+  }
+
+  const data = await response.json();
+  return (data.issues || []).map(issue => ({
+    key: issue.key,
+    summary: issue.fields?.summary || 'No Title',
+    status: issue.fields?.status?.name || 'Unknown',
+    statusCategory: issue.fields?.status?.statusCategory?.key || 'indeterminate',
+    assignee: issue.fields?.assignee?.displayName || 'Unassigned',
+    assigneeEmail: issue.fields?.assignee?.emailAddress || '',
+    assigneeAvatar: issue.fields?.assignee?.avatarUrls?.['24x24'] || issue.fields?.assignee?.avatarUrls?.['48x48'] || '',
+    priority: issue.fields?.priority?.name || 'Medium',
+    issueType: issue.fields?.issuetype?.name || 'Task',
+    fixVersions: (issue.fields?.fixVersions || []).map(v => v.name),
+    updated: issue.fields?.updated || new Date().toISOString()
+  }));
+}
+
 export async function fetchAssignedIssues(config, days = 30, assignee = '', includeClosed = false, assigneeScope = 'my') {
   if (!config.email || !config.token) {
     throw new Error('Jira Email and Token are required.');
