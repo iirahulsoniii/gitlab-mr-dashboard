@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Settings, Check, X, Plus, Trash2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Settings, Check, X, Plus, Trash2, Download, Upload, FileJson, CheckCircle2, AlertCircle } from 'lucide-react';
 
 const normalizeDbConfig = (cfg) => {
   if (!cfg) return { connections: [{ id: 'stage-1', name: 'Stage DB', environment: 'stage', user: '', password: '', dsn: '' }] };
@@ -39,7 +39,17 @@ const normalizeDbConfig = (cfg) => {
   return { ...cfg, connections };
 };
 
-export default function SettingsModal({ isOpen, onClose, instances, onSaveInstances, jiraConfig, onSaveJiraConfig, dbConfig, onSaveDbConfig }) {
+export default function SettingsModal({ 
+  isOpen, 
+  onClose, 
+  instances, 
+  onSaveInstances, 
+  jiraConfig, 
+  onSaveJiraConfig, 
+  dbConfig, 
+  onSaveDbConfig,
+  onImportAll
+}) {
   const [localInstances, setLocalInstances] = useState(
     instances.length > 0 ? instances : [{ id: Date.now(), name: 'GitLab', provider: 'gitlab', url: 'https://gitlab.com', token: '' }]
   );
@@ -49,6 +59,26 @@ export default function SettingsModal({ isOpen, onClose, instances, onSaveInstan
   );
 
   const [localDbConfig, setLocalDbConfig] = useState(() => normalizeDbConfig(dbConfig));
+  const [statusMessage, setStatusMessage] = useState(null);
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (instances && instances.length > 0) {
+      setLocalInstances(instances);
+    }
+  }, [instances]);
+
+  useEffect(() => {
+    if (jiraConfig) {
+      setLocalJiraConfig(jiraConfig);
+    }
+  }, [jiraConfig]);
+
+  useEffect(() => {
+    if (dbConfig) {
+      setLocalDbConfig(normalizeDbConfig(dbConfig));
+    }
+  }, [dbConfig]);
 
   if (!isOpen) return null;
 
@@ -103,6 +133,234 @@ export default function SettingsModal({ isOpen, onClose, instances, onSaveInstan
     }));
   };
 
+  const handleExportConfig = () => {
+    try {
+      const exportData = {
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        gitInstances: localInstances,
+        jiraConfig: localJiraConfig,
+        dbConfig: localDbConfig,
+        savedQueries: JSON.parse(localStorage.getItem('db_saved_queries') || '{}'),
+        jiraHolidays: JSON.parse(localStorage.getItem('jira_holidays') || '[]'),
+        plannedReleases: JSON.parse(localStorage.getItem('planned_releases_data') || '[]'),
+        teamMembers: JSON.parse(localStorage.getItem('jira_team_members') || '[]')
+      };
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const dateStr = new Date().toISOString().slice(0, 10);
+      a.download = `gitlab-mr-dashboard-config-${dateStr}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setStatusMessage({ type: 'success', text: 'All configurations exported successfully to JSON file!' });
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: `Export failed: ${err.message}` });
+    }
+  };
+
+  const handleDownloadTemplate = () => {
+    try {
+      const templateData = {
+        version: '1.0',
+        _description: 'GitLab MR & Operations Dashboard Configuration File',
+        gitInstances: [
+          {
+            id: 1,
+            name: 'GitLab Main',
+            provider: 'gitlab',
+            url: 'https://gitlab.com',
+            token: 'glpat-your-token-here'
+          },
+          {
+            id: 2,
+            name: 'GitHub Org',
+            provider: 'github',
+            url: 'https://api.github.com',
+            token: 'ghp_your_token_here'
+          }
+        ],
+        jiraConfig: {
+          email: 'your.name@omantel.om',
+          token: 'your-jira-api-token',
+          bauTicket: 'CS-17557'
+        },
+        dbConfig: {
+          connections: [
+            {
+              id: 'stage-1',
+              name: 'Stage DB',
+              environment: 'stage',
+              user: 'stage_user',
+              password: 'stage_password',
+              dsn: '10.0.0.1:1521/STAGE_SERVICE'
+            },
+            {
+              id: 'prod-1',
+              name: 'Production DB',
+              environment: 'prod',
+              user: 'prod_user',
+              password: 'prod_password',
+              dsn: '10.0.0.2:1521/PROD_SERVICE'
+            }
+          ]
+        },
+        savedQueries: {
+          "Sample Query": "SELECT * FROM my_table FETCH FIRST 20 ROWS ONLY"
+        },
+        jiraHolidays: [
+          {
+            date: "2026-01-01",
+            name: "New Year's Day"
+          }
+        ],
+        plannedReleases: [],
+        teamMembers: []
+      };
+      const blob = new Blob([JSON.stringify(templateData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'dashboard-config-template.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: `Template download failed: ${err.message}` });
+    }
+  };
+
+  const handleImportClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target.result);
+        if (!parsed || typeof parsed !== 'object') {
+          throw new Error('Invalid JSON format.');
+        }
+
+        let importedGit = null;
+        let importedJira = null;
+        let importedDb = null;
+        let importedQueries = null;
+        let importedHolidays = null;
+        let importedReleases = null;
+        const summaryParts = [];
+
+        // Git instances detection
+        if (Array.isArray(parsed.gitInstances) || Array.isArray(parsed['git-dashboard-instances']) || Array.isArray(parsed.instances)) {
+          importedGit = parsed.gitInstances || parsed['git-dashboard-instances'] || parsed.instances;
+        } else if (parsed.url && parsed.token) {
+          importedGit = [{ id: Date.now(), name: 'Imported Git', provider: 'gitlab', url: parsed.url, token: parsed.token }];
+        }
+
+        if (importedGit && importedGit.length > 0) {
+          setLocalInstances(importedGit);
+          summaryParts.push(`${importedGit.length} Git instance(s)`);
+        }
+
+        // Jira config detection
+        const rawJira = parsed.jiraConfig || parsed['jira-dashboard-config'] || parsed.jira;
+        if (rawJira && typeof rawJira === 'object') {
+          importedJira = {
+            email: rawJira.email || '',
+            token: rawJira.token || '',
+            bauTicket: rawJira.bauTicket || 'CS-17557'
+          };
+          setLocalJiraConfig(importedJira);
+          summaryParts.push('Jira credentials');
+        }
+
+        // DB config detection
+        const rawDb = parsed.dbConfig || parsed['db-dashboard-config'] || parsed.db;
+        if (rawDb) {
+          importedDb = normalizeDbConfig(rawDb);
+          setLocalDbConfig(importedDb);
+          summaryParts.push(`${importedDb.connections?.length || 0} DB connection(s)`);
+        }
+
+        // Saved queries
+        const rawQueries = parsed.savedQueries || parsed.db_saved_queries;
+        if (rawQueries && typeof rawQueries === 'object') {
+          importedQueries = rawQueries;
+          summaryParts.push(`${Object.keys(rawQueries).length} saved queries`);
+        }
+
+        // Jira holidays
+        const rawHolidays = parsed.jiraHolidays || parsed.jira_holidays;
+        if (Array.isArray(rawHolidays)) {
+          importedHolidays = rawHolidays;
+          summaryParts.push(`${rawHolidays.length} holiday(s)`);
+        }
+
+        // Planned releases
+        const rawReleases = parsed.plannedReleases || parsed.planned_releases_data;
+        if (Array.isArray(rawReleases)) {
+          importedReleases = rawReleases;
+          summaryParts.push(`${rawReleases.length} planned release(s)`);
+        }
+
+        // Team members
+        let importedTeam = null;
+        const rawTeam = parsed.teamMembers || parsed.jira_team_members || parsed.team;
+        if (Array.isArray(rawTeam)) {
+          importedTeam = rawTeam;
+          summaryParts.push(`${rawTeam.length} team member(s)`);
+        }
+
+        if (summaryParts.length === 0) {
+          throw new Error('No recognizable configurations or data found in the JSON file.');
+        }
+
+        // Propagate to parent & localStorage
+        if (onImportAll) {
+          onImportAll({
+            gitInstances: importedGit,
+            jiraConfig: importedJira,
+            dbConfig: importedDb,
+            savedQueries: importedQueries,
+            jiraHolidays: importedHolidays,
+            plannedReleases: importedReleases,
+            teamMembers: importedTeam
+          });
+        } else {
+          if (importedGit) onSaveInstances(importedGit);
+          if (importedJira) onSaveJiraConfig(importedJira);
+          if (importedDb) onSaveDbConfig(importedDb);
+          if (importedQueries) localStorage.setItem('db_saved_queries', JSON.stringify(importedQueries));
+          if (importedHolidays) localStorage.setItem('jira_holidays', JSON.stringify(importedHolidays));
+          if (importedReleases) localStorage.setItem('planned_releases_data', JSON.stringify(importedReleases));
+          if (importedTeam) localStorage.setItem('jira_team_members', JSON.stringify(importedTeam));
+        }
+
+        setStatusMessage({
+          type: 'success',
+          text: `Backup imported successfully! (Restored: ${summaryParts.join(', ')})`
+        });
+      } catch (err) {
+        setStatusMessage({
+          type: 'error',
+          text: `Import failed: ${err.message}`
+        });
+      }
+    };
+    reader.readAsText(file);
+  };
+
   const handleSave = (e) => {
     e.preventDefault();
     onSaveInstances(localInstances);
@@ -122,6 +380,97 @@ export default function SettingsModal({ isOpen, onClose, instances, onSaveInstan
               <X size={20} />
             </button>
           )}
+        </div>
+
+        {/* Status Notification */}
+        {statusMessage && (
+          <div 
+            className="flex items-center justify-between" 
+            style={{ 
+              padding: '0.75rem 1rem', 
+              borderRadius: '8px', 
+              marginBottom: '1.25rem',
+              backgroundColor: statusMessage.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+              border: `1px solid ${statusMessage.type === 'success' ? 'var(--success-color)' : 'var(--danger-color)'}`,
+              color: 'var(--text-primary)',
+              fontSize: '0.9rem'
+            }}
+          >
+            <div className="flex items-center gap-2">
+              {statusMessage.type === 'success' ? (
+                <CheckCircle2 size={18} color="var(--success-color)" />
+              ) : (
+                <AlertCircle size={18} color="var(--danger-color)" />
+              )}
+              <span>{statusMessage.text}</span>
+            </div>
+            <button 
+              type="button" 
+              onClick={() => setStatusMessage(null)} 
+              style={{ background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
+        {/* Backup & Restore Card */}
+        <div 
+          className="glass" 
+          style={{ 
+            padding: '1.25rem', 
+            borderRadius: '10px', 
+            marginBottom: '1.5rem', 
+            border: '1px solid rgba(59, 130, 246, 0.3)',
+            background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(139, 92, 246, 0.08))' 
+          }}
+        >
+          <div className="flex justify-between items-center" style={{ marginBottom: '0.5rem' }}>
+            <h3 style={{ margin: 0, fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent-hover)' }}>
+              <FileJson size={18} /> Backup & Restore (JSON)
+            </h3>
+          </div>
+          <p style={{ margin: '0 0 1rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+            Export all tokens, DB details, Jira credentials, and queries to a JSON file to easily transfer or restore them across any browser.
+          </p>
+
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleFileChange} 
+            accept=".json,application/json" 
+            style={{ display: 'none' }} 
+          />
+
+          <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
+            <button 
+              type="button" 
+              onClick={handleExportConfig} 
+              className="btn btn-primary"
+              style={{ padding: '0.5rem 0.85rem', fontSize: '0.85rem' }}
+            >
+              <Download size={16} /> Export All Settings (JSON)
+            </button>
+
+            <button 
+              type="button" 
+              onClick={handleImportClick} 
+              className="btn"
+              style={{ padding: '0.5rem 0.85rem', fontSize: '0.85rem', borderColor: 'var(--accent-color)' }}
+            >
+              <Upload size={16} /> Import from JSON File
+            </button>
+
+            <button 
+              type="button" 
+              onClick={handleDownloadTemplate} 
+              className="btn"
+              style={{ padding: '0.5rem 0.85rem', fontSize: '0.85rem', background: 'transparent' }}
+              title="Download sample template JSON"
+            >
+              <FileJson size={16} /> Sample Template
+            </button>
+          </div>
         </div>
         
         <form onSubmit={handleSave} className="flex-col gap-6">

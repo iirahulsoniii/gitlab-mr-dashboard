@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   fetchBatchJiraIssues, 
   fetchJiraIssueDetails, 
-  fetchAssignedIssues 
+  fetchAssignedIssues,
+  fetchIssuesByFixVersion 
 } from '../jiraApi';
 import { 
   Plus, 
@@ -23,14 +24,195 @@ import {
   ArrowUpDown, 
   Rocket, 
   FileText, 
-  Edit3 
+  Edit3,
+  ChevronDown
 } from 'lucide-react';
 import '../plannedRelease.css';
+
+const STATUS_FILTER_OPTIONS = [
+  { id: 'done', label: 'Done / Released', color: '#10b981' },
+  { id: 'qa', label: 'In QA / Review', color: '#f59e0b' },
+  { id: 'in-progress', label: 'In Progress', color: '#3b82f6' },
+  { id: 'todo', label: 'To Do / Open', color: '#94a3b8' }
+];
+
+function MultiSelectDropdown({ 
+  title, 
+  allLabel, 
+  options, 
+  selected, 
+  onChange,
+  renderOption
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  // Close on click outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
+  const allIds = useMemo(() => options.map(o => (typeof o === 'string' ? o : o.id)), [options]);
+  const isAllSelected = selected === null || selected.length === allIds.length;
+  const isNoneSelected = selected !== null && selected.length === 0;
+
+  const currentSelectedList = selected === null ? allIds : selected;
+
+  const handleToggle = (id) => {
+    if (isAllSelected) {
+      onChange(allIds.filter(x => x !== id));
+    } else if (currentSelectedList.includes(id)) {
+      onChange(currentSelectedList.filter(x => x !== id));
+    } else {
+      const next = [...currentSelectedList, id];
+      if (next.length === allIds.length) {
+        onChange(allIds);
+      } else {
+        onChange(next);
+      }
+    }
+  };
+
+  const handleSelectAll = () => {
+    onChange(allIds);
+  };
+
+  const handleClearAll = () => {
+    onChange([]);
+  };
+
+  const labelText = useMemo(() => {
+    if (isAllSelected) return allLabel;
+    if (isNoneSelected) return `${title} (0)`;
+    if (currentSelectedList.length === 1 && typeof options[0] === 'string') {
+      return currentSelectedList[0];
+    }
+    return `${title} (${currentSelectedList.length}/${allIds.length})`;
+  }, [isAllSelected, isNoneSelected, currentSelectedList, allIds, allLabel, title, options]);
+
+  return (
+    <div className="multiselect-dropdown-container" ref={dropdownRef} style={{ position: 'relative' }}>
+      <button 
+        type="button"
+        className="btn"
+        onClick={() => setIsOpen(!isOpen)}
+        style={{ 
+          fontSize: '0.82rem', 
+          padding: '0.4rem 0.65rem',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.4rem',
+          borderColor: isAllSelected ? 'var(--border-color)' : 'var(--accent-color)',
+          background: isAllSelected ? 'var(--surface-color-light)' : 'rgba(59, 130, 246, 0.15)',
+          color: isAllSelected ? 'var(--text-primary)' : 'var(--accent-hover)',
+          fontWeight: isAllSelected ? 500 : 600
+        }}
+      >
+        <span>{labelText}</span>
+        <ChevronDown size={13} style={{ transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+      </button>
+
+      {isOpen && (
+        <div 
+          className="glass flex-col"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 4px)',
+            left: 0,
+            zIndex: 150,
+            minWidth: '220px',
+            maxWidth: '300px',
+            maxHeight: '260px',
+            borderRadius: '8px',
+            border: '1px solid rgba(255, 255, 255, 0.15)',
+            background: 'var(--surface-color)',
+            boxShadow: '0 8px 30px rgba(0, 0, 0, 0.5)',
+            padding: '0.5rem',
+            gap: '0.35rem'
+          }}
+        >
+          {/* Header Action Row */}
+          <div className="flex justify-between items-center" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.4rem', marginBottom: '0.2rem' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+              {title}
+            </span>
+            <div className="flex gap-1">
+              <button 
+                type="button" 
+                onClick={handleSelectAll}
+                className="btn"
+                style={{ padding: '0.15rem 0.4rem', fontSize: '0.72rem', background: 'rgba(255, 255, 255, 0.06)' }}
+              >
+                All
+              </button>
+              <button 
+                type="button" 
+                onClick={handleClearAll}
+                className="btn"
+                style={{ padding: '0.15rem 0.4rem', fontSize: '0.72rem', background: 'transparent', color: 'var(--danger-color)' }}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+
+          {/* Options List */}
+          <div className="flex-col gap-1" style={{ overflowY: 'auto', maxHeight: '190px' }}>
+            {options.map((opt) => {
+              const id = typeof opt === 'string' ? opt : opt.id;
+              const label = typeof opt === 'string' ? opt : opt.label;
+              const isChecked = currentSelectedList.includes(id);
+
+              return (
+                <label 
+                  key={id}
+                  className="flex items-center gap-2"
+                  style={{
+                    padding: '0.35rem 0.5rem',
+                    borderRadius: '5px',
+                    cursor: 'pointer',
+                    fontSize: '0.82rem',
+                    userSelect: 'none',
+                    background: isChecked ? 'rgba(59, 130, 246, 0.08)' : 'transparent',
+                    color: isChecked ? 'var(--text-primary)' : 'var(--text-secondary)'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = isChecked ? 'rgba(59, 130, 246, 0.08)' : 'transparent'}
+                >
+                  <input 
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={() => handleToggle(id)}
+                    style={{ cursor: 'pointer', accentColor: 'var(--accent-color)' }}
+                  />
+                  {renderOption ? renderOption(opt, isChecked) : (
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {label}
+                    </span>
+                  )}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const DEFAULT_RELEASES = [
   {
     id: 'rel-sample-1',
     version: 'v2.4.0',
+    fixVersion: 'v2.4.0',
     name: 'Core Services & Self-Care Enhancements',
     plannedDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
     status: 'In QA', // In Planning, Development, Code Freeze, In QA, Ready for Production, Released
@@ -54,6 +236,7 @@ const DEFAULT_RELEASES = [
   {
     id: 'rel-sample-2',
     version: 'v2.5.0',
+    fixVersion: 'v2.5.0',
     name: 'Autumn Feature Release',
     plannedDate: new Date(Date.now() + 35 * 86400000).toISOString().split('T')[0],
     status: 'In Planning',
@@ -83,23 +266,26 @@ export default function PlannedReleaseDashboard({ config }) {
   const [ticketInput, setTicketInput] = useState('');
   const [addingTickets, setAddingTickets] = useState(false);
   const [syncingAll, setSyncingAll] = useState(false);
+  const [syncingFixVersion, setSyncingFixVersion] = useState(false);
   const [syncingTicketKey, setSyncingTicketKey] = useState(null);
   const [message, setMessage] = useState({ text: '', type: '' });
 
-  // Filtering inside the active release
+  // Filtering inside the active release (Multi-select by default selects all)
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [priorityFilter, setPriorityFilter] = useState('all');
-  const [assigneeFilter, setAssigneeFilter] = useState('all');
+  const [selectedStatuses, setSelectedStatuses] = useState(null); // null = all selected
+  const [selectedPriorities, setSelectedPriorities] = useState(null); // null = all selected
+  const [selectedAssignees, setSelectedAssignees] = useState(null); // null = all selected
 
   // Modals
   const [isNewReleaseModalOpen, setIsNewReleaseModalOpen] = useState(false);
   const [newReleaseData, setNewReleaseData] = useState({
     version: '',
+    fixVersion: '',
     name: '',
     plannedDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
     status: 'In Planning',
-    description: ''
+    description: '',
+    autoFetchFixVersion: true
   });
 
   const [isPickerOpen, setIsPickerOpen] = useState(false);
@@ -297,6 +483,64 @@ export default function PlannedReleaseDashboard({ config }) {
     }
   };
 
+  // Sync all tickets linked with a FixVersion from Jira
+  const handleSyncFixVersion = async (customFixVersion = null, targetRelId = null) => {
+    const relToUpdate = targetRelId ? releases.find(r => r.id === targetRelId) : activeRelease;
+    if (!relToUpdate) return;
+
+    if (!config.email || !config.token) {
+      showNotification('Please configure Jira Email and API Token in Settings to fetch Jira tickets.', 'error');
+      return;
+    }
+
+    const targetVersion = (customFixVersion !== null ? customFixVersion : (relToUpdate.fixVersion || relToUpdate.version || '')).trim();
+    if (!targetVersion) {
+      showNotification('Please specify a valid Jira FixVersion name (e.g. v2.4.0)', 'warning');
+      return;
+    }
+
+    setSyncingFixVersion(true);
+    try {
+      const issues = await fetchIssuesByFixVersion(config, targetVersion);
+      if (issues.length === 0) {
+        showNotification(`No Jira tickets found with fixVersion "${targetVersion}". Verify the fixVersion in Jira.`, 'warning');
+        return;
+      }
+
+      const existingKeys = new Set((relToUpdate.tickets || []).map(t => t.key.toUpperCase()));
+      const fetchedMap = new Map(issues.map(i => [i.key.toUpperCase(), i]));
+
+      // Update existing tickets with freshly fetched fields
+      const updatedExisting = (relToUpdate.tickets || []).map(t => {
+        if (fetchedMap.has(t.key.toUpperCase())) {
+          return { ...t, ...fetchedMap.get(t.key.toUpperCase()) };
+        }
+        return t;
+      });
+
+      // Find new tickets to append
+      const newTickets = issues.filter(i => !existingKeys.has(i.key.toUpperCase()));
+      const finalTickets = [...newTickets, ...updatedExisting];
+
+      setReleases(prev => prev.map(r => {
+        if (r.id === relToUpdate.id) {
+          return {
+            ...r,
+            fixVersion: targetVersion,
+            tickets: finalTickets
+          };
+        }
+        return r;
+      }));
+
+      showNotification(`Linked ${issues.length} ticket(s) with fixVersion "${targetVersion}" (${newTickets.length} new added)!`, 'success');
+    } catch (err) {
+      showNotification(`FixVersion fetch failed: ${err.message}`, 'error');
+    } finally {
+      setSyncingFixVersion(false);
+    }
+  };
+
   // Single ticket sync
   const handleSyncSingleTicket = async (ticketKey) => {
     if (!config.email || !config.token) {
@@ -340,17 +584,21 @@ export default function PlannedReleaseDashboard({ config }) {
   };
 
   // Create New Release
-  const handleCreateRelease = (e) => {
+  const handleCreateRelease = async (e) => {
     e.preventDefault();
-    if (!newReleaseData.version.trim()) {
+    const ver = newReleaseData.version.trim();
+    if (!ver) {
       alert('Please enter a release version (e.g. v2.6.0)');
       return;
     }
 
+    const assignedFixVersion = newReleaseData.fixVersion.trim() || ver;
+
     const newRel = {
       id: `rel-${Date.now()}`,
-      version: newReleaseData.version.trim(),
-      name: newReleaseData.name.trim() || `Release ${newReleaseData.version.trim()}`,
+      version: ver,
+      fixVersion: assignedFixVersion,
+      name: newReleaseData.name.trim() || `Release ${ver}`,
       plannedDate: newReleaseData.plannedDate,
       status: newReleaseData.status || 'In Planning',
       description: newReleaseData.description.trim(),
@@ -360,14 +608,24 @@ export default function PlannedReleaseDashboard({ config }) {
     setReleases(prev => [newRel, ...prev]);
     setActiveReleaseId(newRel.id);
     setIsNewReleaseModalOpen(false);
+
+    const shouldAutoFetch = newReleaseData.autoFetchFixVersion && assignedFixVersion && config.email && config.token;
+
     setNewReleaseData({
       version: '',
+      fixVersion: '',
       name: '',
       plannedDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
       status: 'In Planning',
-      description: ''
+      description: '',
+      autoFetchFixVersion: true
     });
+
     showNotification(`Created new release ${newRel.version}!`, 'success');
+
+    if (shouldAutoFetch) {
+      handleSyncFixVersion(assignedFixVersion, newRel.id);
+    }
   };
 
   // Delete Active Release
@@ -486,33 +744,39 @@ export default function PlannedReleaseDashboard({ config }) {
         const matchStatus = (t.status || '').toLowerCase().includes(q);
         if (!matchKey && !matchSum && !matchAssignee && !matchStatus) return false;
       }
-      // Status Filter
-      if (statusFilter !== 'all') {
+      
+      // Status Multi-Select Filter (null means all selected)
+      if (selectedStatuses !== null) {
         const cat = getStatusBadgeClass(t.status, t.statusCategory);
-        if (statusFilter === 'done' && cat !== 'done') return false;
-        if (statusFilter === 'in-progress' && cat !== 'in-progress') return false;
-        if (statusFilter === 'qa' && cat !== 'qa') return false;
-        if (statusFilter === 'todo' && cat !== 'todo') return false;
+        if (!selectedStatuses.includes(cat)) return false;
       }
-      // Priority Filter
-      if (priorityFilter !== 'all' && t.priority !== priorityFilter) return false;
-      // Assignee Filter
-      if (assigneeFilter !== 'all' && t.assignee !== assigneeFilter) return false;
+
+      // Priority Multi-Select Filter (null means all selected)
+      if (selectedPriorities !== null) {
+        const p = t.priority || 'Medium';
+        if (!selectedPriorities.includes(p)) return false;
+      }
+
+      // Assignee Multi-Select Filter (null means all selected)
+      if (selectedAssignees !== null) {
+        const a = t.assignee || 'Unassigned';
+        if (!selectedAssignees.includes(a)) return false;
+      }
 
       return true;
     });
-  }, [activeRelease, searchQuery, statusFilter, priorityFilter, assigneeFilter]);
+  }, [activeRelease, searchQuery, selectedStatuses, selectedPriorities, selectedAssignees]);
 
   // Available filter options
   const uniqueAssignees = useMemo(() => {
-    if (!activeRelease) return [];
-    const set = new Set(activeRelease.tickets.map(t => t.assignee).filter(Boolean));
+    if (!activeRelease || !activeRelease.tickets) return [];
+    const set = new Set(activeRelease.tickets.map(t => t.assignee || 'Unassigned').filter(Boolean));
     return Array.from(set).sort();
   }, [activeRelease]);
 
   const uniquePriorities = useMemo(() => {
-    if (!activeRelease) return [];
-    const set = new Set(activeRelease.tickets.map(t => t.priority).filter(Boolean));
+    if (!activeRelease || !activeRelease.tickets) return [];
+    const set = new Set(activeRelease.tickets.map(t => t.priority || 'Medium').filter(Boolean));
     return Array.from(set).sort();
   }, [activeRelease]);
 
@@ -601,6 +865,39 @@ export default function PlannedReleaseDashboard({ config }) {
                   placeholder="Release Codename / Main Focus (e.g. Payments Migration)"
                   title="Click to edit release focus name"
                 />
+
+                {/* Jira FixVersion Attached Control */}
+                <div className="flex items-center gap-2 flex-wrap" style={{ marginTop: '0.35rem' }}>
+                  <span className="tag" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.3)', fontWeight: 600 }}>
+                    Jira FixVersion:
+                  </span>
+                  <input 
+                    type="text" 
+                    value={activeRelease.fixVersion !== undefined ? activeRelease.fixVersion : activeRelease.version}
+                    onChange={(e) => updateActiveRelease('fixVersion', e.target.value)}
+                    placeholder="e.g. v2.4.0"
+                    title="Click to edit Jira FixVersion to link tickets with"
+                    style={{ 
+                      background: 'rgba(255,255,255,0.05)', 
+                      border: '1px solid var(--border-color)', 
+                      fontSize: '0.85rem', 
+                      color: 'var(--text-primary)',
+                      padding: '0.25rem 0.5rem',
+                      borderRadius: '6px',
+                      width: '160px'
+                    }}
+                  />
+                  <button 
+                    className="btn btn-primary"
+                    onClick={() => handleSyncFixVersion(activeRelease.fixVersion !== undefined ? activeRelease.fixVersion : activeRelease.version)}
+                    disabled={syncingFixVersion}
+                    style={{ padding: '0.25rem 0.65rem', fontSize: '0.78rem' }}
+                    title="Fetch all tickets linked to this fixVersion in Jira"
+                  >
+                    <Layers size={13} className={syncingFixVersion ? 'spinner' : ''} />
+                    {syncingFixVersion ? 'Fetching...' : 'Fetch FixVersion Tickets'}
+                  </button>
+                </div>
               </div>
 
               {/* Release Header Controls: Date & Status */}
@@ -772,6 +1069,17 @@ export default function PlannedReleaseDashboard({ config }) {
 
               <button 
                 className="btn" 
+                onClick={() => handleSyncFixVersion()}
+                disabled={syncingFixVersion}
+                title={`Fetch all tickets linked to fixVersion: "${activeRelease.fixVersion || activeRelease.version}"`}
+                style={{ whiteSpace: 'nowrap', borderColor: 'rgba(59, 130, 246, 0.4)' }}
+              >
+                <Layers size={15} className={syncingFixVersion ? 'spinner' : ''} style={{ color: 'var(--accent-color)' }} />
+                {syncingFixVersion ? 'Syncing...' : 'Sync FixVersion'}
+              </button>
+
+              <button 
+                className="btn" 
                 onClick={handleOpenPicker}
                 title="Browse & select from your assigned Jira issues"
                 style={{ whiteSpace: 'nowrap' }}
@@ -798,44 +1106,53 @@ export default function PlannedReleaseDashboard({ config }) {
                 )}
               </div>
 
-              {/* Status Filter */}
-              <select 
-                className="btn" 
-                value={statusFilter} 
-                onChange={(e) => setStatusFilter(e.target.value)}
-                style={{ fontSize: '0.82rem', padding: '0.4rem 0.65rem' }}
-              >
-                <option value="all">All Statuses</option>
-                <option value="done">Done / Released</option>
-                <option value="qa">In QA / Review</option>
-                <option value="in-progress">In Progress</option>
-                <option value="todo">To Do / Open</option>
-              </select>
+              {/* Status Multi-Select Filter */}
+              <MultiSelectDropdown 
+                title="Statuses"
+                allLabel="All Statuses"
+                options={STATUS_FILTER_OPTIONS}
+                selected={selectedStatuses}
+                onChange={setSelectedStatuses}
+                renderOption={(opt) => (
+                  <div className="flex items-center gap-2">
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: opt.color, flexShrink: 0 }} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{opt.label}</span>
+                  </div>
+                )}
+              />
 
-              {/* Priority Filter */}
-              {uniquePriorities.length > 1 && (
-                <select 
-                  className="btn" 
-                  value={priorityFilter} 
-                  onChange={(e) => setPriorityFilter(e.target.value)}
-                  style={{ fontSize: '0.82rem', padding: '0.4rem 0.65rem' }}
-                >
-                  <option value="all">All Priorities</option>
-                  {uniquePriorities.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
+              {/* Priority Multi-Select Filter */}
+              {uniquePriorities.length > 0 && (
+                <MultiSelectDropdown 
+                  title="Priorities"
+                  allLabel="All Priorities"
+                  options={uniquePriorities}
+                  selected={selectedPriorities}
+                  onChange={setSelectedPriorities}
+                  renderOption={(opt) => (
+                    <div className="flex items-center gap-2">
+                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: getPriorityColor(opt), flexShrink: 0 }} />
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{opt}</span>
+                    </div>
+                  )}
+                />
               )}
 
-              {/* Assignee Filter */}
-              {uniqueAssignees.length > 1 && (
-                <select 
-                  className="btn" 
-                  value={assigneeFilter} 
-                  onChange={(e) => setAssigneeFilter(e.target.value)}
-                  style={{ fontSize: '0.82rem', padding: '0.4rem 0.65rem' }}
-                >
-                  <option value="all">All Assignees</option>
-                  {uniqueAssignees.map(a => <option key={a} value={a}>{a}</option>)}
-                </select>
+              {/* Assignee Multi-Select Filter */}
+              {uniqueAssignees.length > 0 && (
+                <MultiSelectDropdown 
+                  title="Assignees"
+                  allLabel="All Assignees"
+                  options={uniqueAssignees}
+                  selected={selectedAssignees}
+                  onChange={setSelectedAssignees}
+                  renderOption={(opt) => (
+                    <div className="flex items-center gap-2">
+                      <User size={13} style={{ color: 'var(--accent-color)', flexShrink: 0 }} />
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{opt}</span>
+                    </div>
+                  )}
+                />
               )}
             </div>
           </div>
@@ -981,16 +1298,35 @@ export default function PlannedReleaseDashboard({ config }) {
             </div>
 
             <form onSubmit={handleCreateRelease} className="flex-col gap-4">
-              <div className="flex-col gap-1">
-                <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Release Version *</label>
-                <input 
-                  type="text" 
-                  placeholder="e.g. v2.6.0 or 2026.09" 
-                  value={newReleaseData.version}
-                  onChange={(e) => setNewReleaseData({ ...newReleaseData, version: e.target.value })}
-                  required
-                  autoFocus
-                />
+              <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div className="flex-col gap-1">
+                  <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Release Version *</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. v2.6.0 or 2026.09" 
+                    value={newReleaseData.version}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setNewReleaseData(prev => ({
+                        ...prev,
+                        version: v,
+                        fixVersion: (!prev.fixVersion || prev.fixVersion === prev.version) ? v : prev.fixVersion
+                      }));
+                    }}
+                    required
+                    autoFocus
+                  />
+                </div>
+
+                <div className="flex-col gap-1">
+                  <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Jira FixVersion</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. v2.6.0" 
+                    value={newReleaseData.fixVersion}
+                    onChange={(e) => setNewReleaseData({ ...newReleaseData, fixVersion: e.target.value })}
+                  />
+                </div>
               </div>
 
               <div className="flex-col gap-1">
@@ -1001,6 +1337,18 @@ export default function PlannedReleaseDashboard({ config }) {
                   value={newReleaseData.name}
                   onChange={(e) => setNewReleaseData({ ...newReleaseData, name: e.target.value })}
                 />
+              </div>
+
+              <div className="flex items-center gap-2" style={{ margin: '-0.25rem 0' }}>
+                <input 
+                  type="checkbox" 
+                  id="autoFetchFixVersion"
+                  checked={newReleaseData.autoFetchFixVersion}
+                  onChange={(e) => setNewReleaseData({ ...newReleaseData, autoFetchFixVersion: e.target.checked })}
+                />
+                <label htmlFor="autoFetchFixVersion" style={{ fontSize: '0.85rem', color: 'var(--text-primary)', cursor: 'pointer' }}>
+                  Automatically fetch & add all Jira tickets for this FixVersion on creation
+                </label>
               </div>
 
               <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>

@@ -344,6 +344,87 @@ export async function fetchBatchJiraIssues(config, issueKeys) {
   }));
 }
 
+export async function fetchIssuesByFixVersion(config, fixVersion) {
+  if (!config.email || !config.token) {
+    throw new Error('Jira Email and Token are required in Settings.');
+  }
+  if (!fixVersion || !fixVersion.trim()) {
+    throw new Error('Please specify a valid FixVersion.');
+  }
+
+  const authString = btoa(`${config.email}:${config.token}`);
+  const headers = {
+    'Authorization': `Basic ${authString}`,
+    'Accept': 'application/json',
+    'Content-Type': 'application/json'
+  };
+
+  // Support multiple comma-separated fixVersions, e.g. "v2.4.0, 2.4.0"
+  const versions = fixVersion
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean);
+
+  if (versions.length === 0) return [];
+
+  const jqlQuery = `fixVersion IN (${versions.map(v => `"${v}"`).join(', ')}) ORDER BY priority DESC, created DESC`;
+
+  let allIssues = [];
+  let nextPageToken = null;
+  let isLast = false;
+
+  while (!isLast) {
+    const payload = {
+      jql: jqlQuery,
+      fields: ["summary", "status", "assignee", "priority", "issuetype", "fixVersions", "updated"],
+      maxResults: 100
+    };
+    if (nextPageToken) {
+      payload.nextPageToken = nextPageToken;
+    }
+
+    const response = await fetch('/jira-api/rest/api/3/search/jql', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      const errTxt = await response.text().catch(() => '');
+      throw new Error(`Jira API Error (${response.status}): ${response.statusText} ${errTxt}`);
+    }
+
+    const data = await response.json();
+    allIssues = allIssues.concat(data.issues || []);
+
+    if (data.isLast !== undefined) {
+      isLast = data.isLast;
+    } else {
+      isLast = true;
+    }
+
+    if (!isLast && data.nextPageToken) {
+      nextPageToken = data.nextPageToken;
+    } else {
+      isLast = true;
+    }
+  }
+
+  return allIssues.map(issue => ({
+    key: issue.key,
+    summary: issue.fields?.summary || 'No Title',
+    status: issue.fields?.status?.name || 'Unknown',
+    statusCategory: issue.fields?.status?.statusCategory?.key || 'indeterminate',
+    assignee: issue.fields?.assignee?.displayName || 'Unassigned',
+    assigneeEmail: issue.fields?.assignee?.emailAddress || '',
+    assigneeAvatar: issue.fields?.assignee?.avatarUrls?.['24x24'] || issue.fields?.assignee?.avatarUrls?.['48x48'] || '',
+    priority: issue.fields?.priority?.name || 'Medium',
+    issueType: issue.fields?.issuetype?.name || 'Task',
+    fixVersions: (issue.fields?.fixVersions || []).map(v => v.name),
+    updated: issue.fields?.updated || new Date().toISOString()
+  }));
+}
+
 export async function fetchAssignedIssues(config, days = 30, assignee = '', includeClosed = false, assigneeScope = 'my') {
   if (!config.email || !config.token) {
     throw new Error('Jira Email and Token are required.');
@@ -437,4 +518,111 @@ export async function fetchAssignedIssues(config, days = 30, assignee = '', incl
 
   const data = await response.json();
   return data.issues || [];
+}
+
+export async function searchJiraUsers(config, query) {
+  if (!config.email || !config.token) {
+    throw new Error('Jira Email and Token are required in Settings.');
+  }
+  if (!query || !query.trim()) return [];
+
+  const authString = btoa(`${config.email}:${config.token}`);
+  const res = await fetch(`/jira-api/rest/api/3/user/search?query=${encodeURIComponent(query.trim())}`, {
+    headers: {
+      'Authorization': `Basic ${authString}`,
+      'Accept': 'application/json'
+    }
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    throw new Error(`User search failed: ${res.statusText} ${err}`);
+  }
+
+  const users = await res.json();
+  if (!Array.isArray(users)) return [];
+
+  return users
+    .filter(u => u.accountType !== 'app' && u.active !== false)
+    .map(u => ({
+      accountId: u.accountId,
+      displayName: u.displayName || u.emailAddress || 'Unnamed User',
+      emailAddress: u.emailAddress || '',
+      avatarUrl: u.avatarUrls?.['24x24'] || u.avatarUrls?.['48x48'] || ''
+    }));
+}
+
+export async function fetchIssuesForAssignees(config, { accountIds = [], isCurrentUser = false, days = 30, includeClosed = false }) {
+  if (!config.email || !config.token) {
+    throw new Error('Jira Email and Token are required.');
+  }
+
+  const authString = btoa(`${config.email}:${config.token}`);
+  const headers = {
+    'Authorization': `Basic ${authString}`,
+    'Accept': 'application/json',
+    'Content-Type': 'application/json'
+  };
+
+  let assigneeJQL = '';
+  if (isCurrentUser) {
+    assigneeJQL = 'assignee = currentUser()';
+  } else if (accountIds && accountIds.length > 0) {
+    const idList = accountIds.map(id => `"${id}"`).join(', ');
+    assigneeJQL = `assignee IN (${idList})`;
+  } else {
+    return [];
+  }
+
+  const statusJQL = includeClosed 
+    ? '' 
+    : 'status NOT IN ("Reject", "Rejected", "Closed", "Done", "Resolved", "Ready for production", "Cancelled")';
+
+  const daysJQL = days > 0 ? `updated >= '-${days}d'` : '';
+
+  const conditions = [assigneeJQL, statusJQL, daysJQL].filter(Boolean).join(' AND ');
+  const jqlQuery = conditions ? `${conditions} ORDER BY priority DESC, updated DESC` : 'ORDER BY priority DESC, updated DESC';
+
+  let allIssues = [];
+  let nextPageToken = null;
+  let isLast = false;
+
+  while (!isLast) {
+    const payload = {
+      jql: jqlQuery,
+      fields: ["summary", "priority", "status", "created", "updated", "issuetype", "fixVersions", "assignee"],
+      maxResults: 100
+    };
+    if (nextPageToken) {
+      payload.nextPageToken = nextPageToken;
+    }
+
+    const response = await fetch('/jira-api/rest/api/3/search/jql', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      const errTxt = await response.text().catch(() => '');
+      throw new Error(`Failed to fetch issues: ${response.status} - ${errTxt}`);
+    }
+
+    const data = await response.json();
+    allIssues = allIssues.concat(data.issues || []);
+
+    if (data.isLast !== undefined) {
+      isLast = data.isLast;
+    } else {
+      isLast = true;
+    }
+
+    if (!isLast && data.nextPageToken) {
+      nextPageToken = data.nextPageToken;
+    } else {
+      isLast = true;
+    }
+  }
+
+  return allIssues;
 }

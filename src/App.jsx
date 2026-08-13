@@ -108,6 +108,36 @@ function App() {
     setIsSettingsOpen(false);
   };
 
+  const handleImportAll = (imported) => {
+    if (imported.gitInstances && imported.gitInstances.length > 0) {
+      setInstances(imported.gitInstances);
+      localStorage.setItem('git-dashboard-instances', JSON.stringify(imported.gitInstances));
+      if (!imported.gitInstances.find(i => i.id === activeInstanceId)) {
+        setActiveInstanceId(imported.gitInstances[0].id);
+      }
+    }
+    if (imported.jiraConfig) {
+      setJiraConfig(imported.jiraConfig);
+      localStorage.setItem('jira-dashboard-config', JSON.stringify(imported.jiraConfig));
+    }
+    if (imported.dbConfig) {
+      setDbConfig(imported.dbConfig);
+      localStorage.setItem('db-dashboard-config', JSON.stringify(imported.dbConfig));
+    }
+    if (imported.savedQueries) {
+      localStorage.setItem('db_saved_queries', JSON.stringify(imported.savedQueries));
+    }
+    if (imported.jiraHolidays) {
+      localStorage.setItem('jira_holidays', JSON.stringify(imported.jiraHolidays));
+    }
+    if (imported.plannedReleases) {
+      localStorage.setItem('planned_releases_data', JSON.stringify(imported.plannedReleases));
+    }
+    if (imported.teamMembers) {
+      localStorage.setItem('jira_team_members', JSON.stringify(imported.teamMembers));
+    }
+  };
+
   const normalizeForSearch = (str) => str ? str.toLowerCase().replace(/\s+/g, '') : '';
 
   // Calculate available services based on ALL filters EXCEPT the 'service' filter
@@ -300,8 +330,9 @@ function App() {
         </div>
       )}
 
-      {activeView === 'mr' ? (
-        !isSettingsOpen && activeInstance && (
+      {/* MR Dashboard View */}
+      <div style={{ display: activeView === 'mr' ? 'block' : 'none' }}>
+        {!isSettingsOpen && activeInstance && (
           <>
             <FilterPanel 
               filters={filters} 
@@ -328,16 +359,28 @@ function App() {
               <JiraList tickets={jiraTickets} />
             )}
           </>
-        )
-      ) : activeView === 'jira' ? (
+        )}
+      </div>
+
+      {/* Jira Worklog Dashboard View */}
+      <div style={{ display: activeView === 'jira' ? 'block' : 'none' }}>
         <JiraWorklogDashboard config={jiraConfig} />
-      ) : activeView === 'jira-issues' ? (
+      </div>
+
+      {/* Jira Issues Dashboard View */}
+      <div style={{ display: activeView === 'jira-issues' ? 'block' : 'none' }}>
         <JiraIssuesDashboard config={jiraConfig} />
-      ) : activeView === 'planned-release' ? (
+      </div>
+
+      {/* Planned Release Dashboard View */}
+      <div style={{ display: activeView === 'planned-release' ? 'block' : 'none' }}>
         <PlannedReleaseDashboard config={jiraConfig} />
-      ) : (
+      </div>
+
+      {/* Database Dashboard View */}
+      <div style={{ display: activeView === 'db' ? 'block' : 'none' }}>
         <DBDashboard dbConfig={dbConfig} />
-      )}
+      </div>
 
       <SettingsModal 
         isOpen={isSettingsOpen} 
@@ -348,6 +391,7 @@ function App() {
         onSaveJiraConfig={handleSaveJiraConfig}
         dbConfig={dbConfig}
         onSaveDbConfig={handleSaveDbConfig}
+        onImportAll={handleImportAll}
       />
     </div>
   );

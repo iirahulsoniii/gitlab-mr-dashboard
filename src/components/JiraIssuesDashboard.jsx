@@ -1,67 +1,190 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { fetchAssignedIssues } from '../jiraApi';
-import { RefreshCcw, Loader2, AlertCircle, User } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { 
+  fetchIssuesForAssignees, 
+  searchJiraUsers 
+} from '../jiraApi';
+import { 
+  RefreshCcw, 
+  Loader2, 
+  User, 
+  Users, 
+  X, 
+  Search, 
+  ExternalLink, 
+  Calendar 
+} from 'lucide-react';
 import '../jira.css';
 
 export default function JiraIssuesDashboard({ config }) {
-  const [issues, setIssues] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState('my'); // 'my' or 'team'
   
-  const [assigneeScope, setAssigneeScope] = useState('my'); // 'my', 'all', 'unassigned', 'custom'
-  const [assignee, setAssignee] = useState('');
+  // Issues state
+  const [myIssues, setMyIssues] = useState([]);
+  const [teamIssues, setTeamIssues] = useState([]);
+  const [loadingMy, setLoadingMy] = useState(false);
+  const [loadingTeam, setLoadingTeam] = useState(false);
+  const [error, setError] = useState('');
+
+  // Team Members
+  const [teamMembers, setTeamMembers] = useState(() => {
+    const saved = localStorage.getItem('jira_team_members');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {
+        console.error('Error parsing team members:', e);
+      }
+    }
+    return [];
+  });
+
+  const [selectedTeamMemberId, setSelectedTeamMemberId] = useState('all');
+
+  // Team member user search state
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [userSearchResults, setUserSearchResults] = useState([]);
+  const [isSearchingUsers, setIsSearchingUsers] = useState(false);
+  const [isUserSearchOpen, setIsUserSearchOpen] = useState(false);
+  const searchDropdownRef = useRef(null);
+
+  // Filters
   const [daysFilter, setDaysFilter] = useState(30);
   const [priorityFilter, setPriorityFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [fixVersionFilter, setFixVersionFilter] = useState('all');
   const [includeClosed, setIncludeClosed] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
+  // Sync team members to localStorage
+  useEffect(() => {
+    localStorage.setItem('jira_team_members', JSON.stringify(teamMembers));
+  }, [teamMembers]);
+
+  // Load My Issues on mount or filter changes
   useEffect(() => {
     if (config.email && config.token) {
-      loadData();
+      loadMyIssues();
     } else {
       setError('Please configure Jira Email and Token in Settings.');
     }
-  }, [config, daysFilter, includeClosed, assigneeScope]);
+  }, [config, daysFilter, includeClosed]);
 
-  const loadData = async () => {
-    setLoading(true);
+  // Load Team Issues when team members or filters change
+  useEffect(() => {
+    if (config.email && config.token && teamMembers.length > 0) {
+      loadTeamIssues();
+    } else {
+      setTeamIssues([]);
+    }
+  }, [config, daysFilter, includeClosed, teamMembers]);
+
+  // Debounced search for Jira users
+  useEffect(() => {
+    if (!userSearchQuery.trim() || userSearchQuery.trim().length < 2) {
+      setUserSearchResults([]);
+      setIsSearchingUsers(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setIsSearchingUsers(true);
+      try {
+        const results = await searchJiraUsers(config, userSearchQuery);
+        setUserSearchResults(results);
+      } catch (err) {
+        console.error('User search failed:', err);
+      } finally {
+        setIsSearchingUsers(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [userSearchQuery, config]);
+
+  // Close search dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (searchDropdownRef.current && !searchDropdownRef.current.contains(e.target)) {
+        setIsUserSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const loadMyIssues = async () => {
+    setLoadingMy(true);
     setError('');
     try {
-      const data = await fetchAssignedIssues(config, daysFilter, assignee, includeClosed, assigneeScope);
-      setIssues(data);
+      const data = await fetchIssuesForAssignees(config, {
+        isCurrentUser: true,
+        days: daysFilter,
+        includeClosed
+      });
+      setMyIssues(data);
     } catch (err) {
       setError(err.message);
     } finally {
-      setLoading(false);
+      setLoadingMy(false);
     }
   };
 
-  const filteredIssues = useMemo(() => {
-    return issues.filter(i => {
-      const matchesPriority = priorityFilter === 'all' || i.fields?.priority?.name === priorityFilter;
-      const matchesFixVersion = fixVersionFilter === 'all' || (
-        fixVersionFilter === 'none' 
-          ? (!i.fields?.fixVersions || i.fields.fixVersions.length === 0)
-          : i.fields?.fixVersions?.some(v => v.name === fixVersionFilter)
-      );
-      return matchesPriority && matchesFixVersion;
-    });
-  }, [issues, priorityFilter, fixVersionFilter]);
-
-  const priorities = useMemo(() => {
-    const p = new Set(issues.map(i => i.fields?.priority?.name).filter(Boolean));
-    return Array.from(p).sort();
-  }, [issues]);
-
-  const fixVersions = useMemo(() => {
-    const versions = new Set();
-    issues.forEach(i => {
-      i.fields?.fixVersions?.forEach(v => {
-        if (v.name) versions.add(v.name);
+  const loadTeamIssues = async () => {
+    if (teamMembers.length === 0) {
+      setTeamIssues([]);
+      return;
+    }
+    setLoadingTeam(true);
+    setError('');
+    try {
+      const accountIds = teamMembers.map(m => m.accountId).filter(Boolean);
+      const data = await fetchIssuesForAssignees(config, {
+        accountIds,
+        days: daysFilter,
+        includeClosed
       });
-    });
-    return Array.from(versions).sort();
-  }, [issues]);
+      setTeamIssues(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoadingTeam(false);
+    }
+  };
+
+  const handleAddTeamMember = (user) => {
+    if (!teamMembers.some(m => m.accountId === user.accountId)) {
+      setTeamMembers([...teamMembers, user]);
+    }
+    setUserSearchQuery('');
+    setUserSearchResults([]);
+    setIsUserSearchOpen(false);
+  };
+
+  const handleRemoveTeamMember = (accountId, e) => {
+    e.stopPropagation();
+    setTeamMembers(teamMembers.filter(m => m.accountId !== accountId));
+    if (selectedTeamMemberId === accountId) {
+      setSelectedTeamMemberId('all');
+    }
+  };
+
+  // Status Badge Class
+  const getStatusBadgeClass = (statusName, statusCategory) => {
+    const s = (statusName || '').toLowerCase();
+    const cat = (statusCategory || '').toLowerCase();
+
+    if (cat === 'done' || s.includes('done') || s.includes('closed') || s.includes('resolved') || s.includes('production') || s.includes('released')) {
+      return 'done';
+    }
+    if (s.includes('qa') || s.includes('test') || s.includes('review') || s.includes('staging') || s.includes('validation')) {
+      return 'qa';
+    }
+    if (cat === 'indeterminate' || s.includes('progress') || s.includes('development') || s.includes('building')) {
+      return 'in-progress';
+    }
+    return 'todo';
+  };
 
   const getPriorityColor = (name) => {
     const n = name?.toLowerCase() || '';
@@ -72,66 +195,298 @@ export default function JiraIssuesDashboard({ config }) {
     return 'var(--text-secondary)';
   };
 
-  if (error) {
+  // Active issues based on active tab
+  const rawActiveIssues = activeTab === 'my' ? myIssues : teamIssues;
+
+  // Filtered issues
+  const filteredIssues = useMemo(() => {
+    return rawActiveIssues.filter(i => {
+      // Text search
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchKey = i.key.toLowerCase().includes(q);
+        const matchSum = (i.fields?.summary || '').toLowerCase().includes(q);
+        const matchAssignee = (i.fields?.assignee?.displayName || '').toLowerCase().includes(q);
+        const matchStatus = (i.fields?.status?.name || '').toLowerCase().includes(q);
+        if (!matchKey && !matchSum && !matchAssignee && !matchStatus) return false;
+      }
+
+      // Priority Filter
+      if (priorityFilter !== 'all' && i.fields?.priority?.name !== priorityFilter) return false;
+
+      // Status Filter
+      if (statusFilter !== 'all' && i.fields?.status?.name !== statusFilter) return false;
+
+      // FixVersion Filter
+      if (fixVersionFilter !== 'all') {
+        if (fixVersionFilter === 'none') {
+          if (i.fields?.fixVersions && i.fields.fixVersions.length > 0) return false;
+        } else {
+          if (!i.fields?.fixVersions?.some(v => v.name === fixVersionFilter)) return false;
+        }
+      }
+
+      // Team Member Filter on Team tab
+      if (activeTab === 'team' && selectedTeamMemberId !== 'all') {
+        if (i.fields?.assignee?.accountId !== selectedTeamMemberId) return false;
+      }
+
+      return true;
+    });
+  }, [rawActiveIssues, searchQuery, priorityFilter, statusFilter, fixVersionFilter, activeTab, selectedTeamMemberId]);
+
+  // Unique options for current view
+  const availablePriorities = useMemo(() => {
+    const set = new Set(rawActiveIssues.map(i => i.fields?.priority?.name).filter(Boolean));
+    return Array.from(set).sort();
+  }, [rawActiveIssues]);
+
+  const availableStatuses = useMemo(() => {
+    const set = new Set(rawActiveIssues.map(i => i.fields?.status?.name).filter(Boolean));
+    return Array.from(set).sort();
+  }, [rawActiveIssues]);
+
+  const availableFixVersions = useMemo(() => {
+    const set = new Set();
+    rawActiveIssues.forEach(i => {
+      i.fields?.fixVersions?.forEach(v => {
+        if (v.name) set.add(v.name);
+      });
+    });
+    return Array.from(set).sort();
+  }, [rawActiveIssues]);
+
+  // Count tickets per team member
+  const memberTicketCounts = useMemo(() => {
+    const counts = {};
+    teamIssues.forEach(i => {
+      const accId = i.fields?.assignee?.accountId;
+      if (accId) {
+        counts[accId] = (counts[accId] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [teamIssues]);
+
+  const currentLoading = activeTab === 'my' ? loadingMy : loadingTeam;
+
+  if (error && myIssues.length === 0 && teamIssues.length === 0) {
     return (
       <div className="glass" style={{ padding: '2rem', textAlign: 'center', borderColor: 'var(--danger-color)' }}>
-        <h3 style={{ color: 'var(--danger-color)' }}>Error Loading Issues</h3>
+        <h3 style={{ color: 'var(--danger-color)' }}>Error Loading Jira Issues</h3>
         <p>{error}</p>
       </div>
     );
   }
 
   return (
-    <div className="flex-col gap-6" style={{ marginTop: '1rem' }}>
-      <div className="flex justify-between items-center glass" style={{ padding: '1rem 1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-        <div className="flex gap-4 items-center" style={{ flexWrap: 'wrap' }}>
-          {/* Assignee Scope Selector */}
-          <div className="flex gap-2 items-center" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-            Assignee:
-            <select 
-              className="btn" 
-              value={assigneeScope} 
-              onChange={(e) => {
-                setAssigneeScope(e.target.value);
-                if (e.target.value !== 'custom') {
-                  setAssignee('');
-                }
-              }}
-            >
-              <option value="my">Assigned to Me</option>
-              <option value="all">All Users (Anyone)</option>
-              <option value="unassigned">Unassigned Only</option>
-              <option value="custom">Specific Person...</option>
-            </select>
+    <div className="flex-col gap-5" style={{ marginTop: '0.5rem' }}>
+      {/* Top Tab Selector */}
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="glass flex" style={{ padding: '0.25rem', borderRadius: '10px', background: 'rgba(255,255,255,0.05)' }}>
+          <button 
+            className="btn" 
+            style={{ 
+              border: 'none', 
+              background: activeTab === 'my' ? 'var(--surface-color-light)' : 'transparent', 
+              color: activeTab === 'my' ? 'var(--accent-color)' : 'var(--text-secondary)',
+              fontWeight: activeTab === 'my' ? 600 : 500
+            }}
+            onClick={() => setActiveTab('my')}
+          >
+            <User size={16} /> My Issues
+            <span className="tag" style={{ background: activeTab === 'my' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.08)', color: activeTab === 'my' ? 'var(--accent-color)' : 'var(--text-secondary)', marginLeft: '4px' }}>
+              {myIssues.length}
+            </span>
+          </button>
+
+          <button 
+            className="btn" 
+            style={{ 
+              border: 'none', 
+              background: activeTab === 'team' ? 'var(--surface-color-light)' : 'transparent', 
+              color: activeTab === 'team' ? 'var(--accent-color)' : 'var(--text-secondary)',
+              fontWeight: activeTab === 'team' ? 600 : 500
+            }}
+            onClick={() => setActiveTab('team')}
+          >
+            <Users size={16} /> My Team Issues
+            <span className="tag" style={{ background: activeTab === 'team' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.08)', color: activeTab === 'team' ? 'var(--accent-color)' : 'var(--text-secondary)', marginLeft: '4px' }}>
+              {teamIssues.length}
+            </span>
+          </button>
+        </div>
+
+        <button 
+          className="btn" 
+          onClick={activeTab === 'my' ? loadMyIssues : loadTeamIssues} 
+          disabled={currentLoading}
+        >
+          <RefreshCcw size={15} className={currentLoading ? 'spinner' : ''} />
+          {currentLoading ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
+
+      {/* Team Member Manager (Visible on 'My Team Issues' tab) */}
+      {activeTab === 'team' && (
+        <div className="glass flex-col gap-3" style={{ padding: '1rem 1.25rem', borderRadius: '12px', border: '1px solid rgba(59, 130, 246, 0.25)', background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.8))' }}>
+          <div className="flex justify-between items-center flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <Users size={18} style={{ color: 'var(--accent-color)' }} />
+              <h4 style={{ margin: 0, fontSize: '0.95rem' }}>Team Members ({teamMembers.length})</h4>
+            </div>
+
+            {/* Add Team Member Search Box */}
+            <div style={{ position: 'relative' }} ref={searchDropdownRef}>
+              <div className="flex items-center gap-2" style={{ background: 'rgba(255,255,255,0.06)', padding: '0.35rem 0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                <Search size={14} style={{ color: 'var(--text-secondary)' }} />
+                <input 
+                  type="text" 
+                  placeholder="Search & add team member..." 
+                  value={userSearchQuery}
+                  onChange={e => {
+                    setUserSearchQuery(e.target.value);
+                    setIsUserSearchOpen(true);
+                  }}
+                  onFocus={() => setIsUserSearchOpen(true)}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', width: '220px', fontSize: '0.82rem' }}
+                />
+                {isSearchingUsers ? (
+                  <Loader2 size={14} className="spinner" style={{ color: 'var(--accent-color)' }} />
+                ) : userSearchQuery ? (
+                  <button onClick={() => setUserSearchQuery('')} style={{ background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                    <X size={13} />
+                  </button>
+                ) : null}
+              </div>
+
+              {/* User Search Dropdown Menu */}
+              {isUserSearchOpen && userSearchQuery.trim().length >= 2 && (
+                <div className="user-search-dropdown-menu glass">
+                  {isSearchingUsers ? (
+                    <div className="flex justify-center items-center" style={{ padding: '1.5rem' }}>
+                      <Loader2 size={20} className="spinner" style={{ color: 'var(--accent-color)' }} />
+                    </div>
+                  ) : userSearchResults.length === 0 ? (
+                    <div style={{ padding: '1rem', textAlign: 'center', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                      No Jira users found matching "{userSearchQuery}".
+                    </div>
+                  ) : (
+                    userSearchResults.map(user => {
+                      const isAdded = teamMembers.some(m => m.accountId === user.accountId);
+                      return (
+                        <div 
+                          key={user.accountId}
+                          className={`user-search-item ${isAdded ? 'disabled' : ''}`}
+                          onClick={() => !isAdded && handleAddTeamMember(user)}
+                        >
+                          {user.avatarUrl ? (
+                            <img src={user.avatarUrl} alt="" className="team-chip-avatar" style={{ width: '24px', height: '24px' }} />
+                          ) : (
+                            <User size={18} style={{ color: 'var(--accent-color)' }} />
+                          )}
+                          <div className="flex-col" style={{ flexGrow: 1, minWidth: 0 }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>{user.displayName}</span>
+                            {user.emailAddress && (
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {user.emailAddress}
+                              </span>
+                            )}
+                          </div>
+                          {isAdded ? (
+                            <span className="tag" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success-color)', fontSize: '0.7rem' }}>
+                              Added
+                            </span>
+                          ) : (
+                            <span className="tag" style={{ background: 'rgba(59, 130, 246, 0.15)', color: 'var(--accent-color)', fontSize: '0.7rem' }}>
+                              + Add
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Search box when specific person selected */}
-          {assigneeScope === 'custom' && (
-            <div className="flex items-center gap-2" style={{ background: 'rgba(255,255,255,0.05)', padding: '0.4rem 0.8rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-              <User size={16} style={{ color: 'var(--text-secondary)' }} />
-              <input 
-                type="text" 
-                placeholder="Enter exact full name..." 
-                value={assignee}
-                autoFocus
-                onChange={e => setAssignee(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && loadData()}
-                style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', width: '200px', fontSize: '0.85rem' }}
-              />
-              <button 
-                type="button" 
-                onClick={loadData} 
-                className="btn" 
-                style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', background: 'var(--accent-color)', color: '#fff', border: 'none' }}
-              >
-                Search
-              </button>
-            </div>
-          )}
+          {/* Team Member Chips */}
+          <div className="team-members-bar">
+            <button 
+              type="button" 
+              className={`team-chip ${selectedTeamMemberId === 'all' ? 'active' : ''}`}
+              onClick={() => setSelectedTeamMemberId('all')}
+            >
+              <Users size={13} />
+              <span>All Team Members ({teamIssues.length})</span>
+            </button>
 
-          <div className="flex gap-2 items-center" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-            Updated in last: 
-            <select className="btn" value={daysFilter} onChange={(e) => setDaysFilter(Number(e.target.value))}>
+            {teamMembers.map(member => {
+              const isSelected = selectedTeamMemberId === member.accountId;
+              const count = memberTicketCounts[member.accountId] || 0;
+
+              return (
+                <div 
+                  key={member.accountId}
+                  className={`team-chip ${isSelected ? 'active' : ''}`}
+                  onClick={() => setSelectedTeamMemberId(isSelected ? 'all' : member.accountId)}
+                  title={`Click to filter issues for ${member.displayName}`}
+                >
+                  {member.avatarUrl ? (
+                    <img src={member.avatarUrl} alt="" className="team-chip-avatar" />
+                  ) : (
+                    <User size={13} style={{ color: 'var(--accent-color)' }} />
+                  )}
+                  <span>{member.displayName}</span>
+                  <span className="tag" style={{ padding: '0.1rem 0.4rem', fontSize: '0.7rem', background: 'rgba(255,255,255,0.1)' }}>
+                    {count}
+                  </span>
+                  <button 
+                    type="button" 
+                    className="team-chip-remove"
+                    onClick={(e) => handleRemoveTeamMember(member.accountId, e)}
+                    title={`Remove ${member.displayName} from team`}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              );
+            })}
+
+            {teamMembers.length === 0 && (
+              <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                No team members added yet. Search and add team members above.
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Shared Filter Bar */}
+      <div className="glass flex justify-between items-center" style={{ padding: '0.85rem 1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Quick Search */}
+          <div className="flex items-center gap-1" style={{ background: 'rgba(255,255,255,0.04)', padding: '0.35rem 0.65rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+            <Search size={14} style={{ color: 'var(--text-secondary)' }} />
+            <input 
+              type="text" 
+              placeholder="Search issues..." 
+              value={searchQuery} 
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', fontSize: '0.82rem', width: '150px', outline: 'none' }}
+            />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery('')} style={{ background: 'transparent', color: 'var(--text-secondary)' }}>
+                <X size={12} />
+              </button>
+            )}
+          </div>
+
+          {/* Timeframe Filter */}
+          <div className="flex gap-1 items-center" style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
+            <Calendar size={14} />
+            <select className="btn" value={daysFilter} onChange={(e) => setDaysFilter(Number(e.target.value))} style={{ fontSize: '0.82rem', padding: '0.35rem 0.65rem' }}>
               <option value={7}>7 Days</option>
               <option value={14}>14 Days</option>
               <option value={30}>30 Days</option>
@@ -139,88 +494,185 @@ export default function JiraIssuesDashboard({ config }) {
               <option value={365}>1 Year</option>
             </select>
           </div>
-          
-          <div className="flex gap-2 items-center" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-            Priority:
-            <select className="btn" value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
-              <option value="all">All Priorities</option>
-              {priorities.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
-          </div>
 
-          <div className="flex gap-2 items-center" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-            Fix Version:
-            <select className="btn" value={fixVersionFilter} onChange={(e) => setFixVersionFilter(e.target.value)}>
+          {/* Status Filter */}
+          {availableStatuses.length > 1 && (
+            <select className="btn" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ fontSize: '0.82rem', padding: '0.35rem 0.65rem' }}>
+              <option value="all">All Statuses</option>
+              {availableStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          )}
+
+          {/* Priority Filter */}
+          {availablePriorities.length > 1 && (
+            <select className="btn" value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} style={{ fontSize: '0.82rem', padding: '0.35rem 0.65rem' }}>
+              <option value="all">All Priorities</option>
+              {availablePriorities.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          )}
+
+          {/* Fix Version Filter */}
+          {availableFixVersions.length > 0 && (
+            <select className="btn" value={fixVersionFilter} onChange={(e) => setFixVersionFilter(e.target.value)} style={{ fontSize: '0.82rem', padding: '0.35rem 0.65rem' }}>
               <option value="all">All Versions</option>
               <option value="none">No Version</option>
-              {fixVersions.map(v => <option key={v} value={v}>{v}</option>)}
+              {availableFixVersions.map(v => <option key={v} value={v}>{v}</option>)}
             </select>
-          </div>
+          )}
 
-          <label className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', cursor: 'pointer' }}>
+          <label className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', cursor: 'pointer' }}>
             <input 
               type="checkbox" 
               checked={includeClosed} 
               onChange={e => setIncludeClosed(e.target.checked)} 
             />
-            Include Closed/Done
+            Include Closed
           </label>
         </div>
-        
-        <button className="btn" onClick={loadData} disabled={loading}>
-          <RefreshCcw size={16} className={loading ? 'spinner' : ''} />
-          {loading ? 'Refreshing...' : 'Refresh'}
-        </button>
+
+        <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+          Showing <strong>{filteredIssues.length}</strong> of {rawActiveIssues.length} issues
+        </span>
       </div>
 
-      {loading && issues.length === 0 ? (
+      {/* Content: Table View */}
+      {currentLoading && rawActiveIssues.length === 0 ? (
         <div className="flex justify-center items-center" style={{ padding: '4rem' }}>
           <Loader2 className="spinner" size={32} style={{ color: 'var(--accent-color)' }} />
         </div>
+      ) : activeTab === 'team' && teamMembers.length === 0 ? (
+        <div className="glass" style={{ padding: '3.5rem 2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+          <Users size={38} style={{ color: 'var(--accent-color)', opacity: 0.5, marginBottom: '0.75rem' }} />
+          <h3>No Team Members Configured</h3>
+          <p style={{ fontSize: '0.9rem', maxWidth: '450px', margin: '0.5rem auto 1rem auto' }}>
+            Search and add team members using the bar above to track their assigned Jira tickets and workload.
+          </p>
+        </div>
+      ) : filteredIssues.length === 0 ? (
+        <div className="glass" style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+          No issues found matching the selected filter criteria.
+        </div>
       ) : (
-        <div className="flex-col gap-4">
-          {filteredIssues.length === 0 ? (
-            <div className="glass" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-              No issues found for the selected criteria.
-            </div>
-          ) : (
-            filteredIssues.map(issue => (
-              <div key={issue.key} className="glass ticket-card" style={{ padding: '1.25rem 1.5rem', cursor: 'pointer' }} onClick={() => window.open(`https://omantel-om.atlassian.net/browse/${issue.key}`, '_blank')}>
-                <div className="flex-col gap-2" style={{ flexGrow: 1 }}>
-                  <div className="flex justify-between items-start">
-                    <div className="flex items-center gap-3" style={{ flexWrap: 'wrap' }}>
-                      <span style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--text-primary)' }}>{issue.key}</span>
-                      <span className="tag" style={{ background: 'rgba(255,255,255,0.1)', color: 'var(--text-primary)' }}>{issue.fields?.status?.name}</span>
-                      
-                      {/* Assignee Badge */}
-                      <span className="tag" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-                        <User size={12} style={{ color: 'var(--accent-color)' }} />
-                        {issue.fields?.assignee?.displayName || 'Unassigned'}
-                      </span>
+        <div className="jira-issues-table-wrap">
+          <table className="jira-issues-table">
+            <thead>
+              <tr>
+                <th style={{ width: '120px' }}>Key</th>
+                <th style={{ width: '100px' }}>Type</th>
+                <th>Summary</th>
+                {activeTab === 'team' && <th style={{ width: '170px' }}>Assignee</th>}
+                <th style={{ width: '130px' }}>Status</th>
+                <th style={{ width: '110px' }}>Priority</th>
+                <th style={{ width: '130px' }}>Fix Version</th>
+                <th style={{ width: '110px' }}>Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredIssues.map(issue => {
+                const statusName = issue.fields?.status?.name || 'Unknown';
+                const statusCategory = issue.fields?.status?.statusCategory?.key || 'indeterminate';
+                const statusBadgeCls = getStatusBadgeClass(statusName, statusCategory);
+                const priorityName = issue.fields?.priority?.name;
+                const assigneeName = issue.fields?.assignee?.displayName || 'Unassigned';
+                const assigneeAvatar = issue.fields?.assignee?.avatarUrls?.['24x24'] || issue.fields?.assignee?.avatarUrls?.['48x48'];
+                const fixVersions = issue.fields?.fixVersions || [];
 
-                      <span className="tag" style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${getPriorityColor(issue.fields?.priority?.name)}`, color: getPriorityColor(issue.fields?.priority?.name) }}>
-                        {issue.fields?.priority?.name || 'No Priority'}
+                return (
+                  <tr key={issue.key}>
+                    {/* Key */}
+                    <td>
+                      <a 
+                        href={`https://omantel-om.atlassian.net/browse/${issue.key}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="jira-ticket-key-link"
+                        title="Open in Jira"
+                      >
+                        {issue.key} <ExternalLink size={12} />
+                      </a>
+                    </td>
+
+                    {/* Type */}
+                    <td>
+                      <span className="tag" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}>
+                        {issue.fields?.issuetype?.name || 'Task'}
                       </span>
-                      {issue.fields?.fixVersions?.map(v => (
-                        <span key={v.id || v.name} className="tag" style={{ background: 'rgba(59, 130, 246, 0.15)', border: '1px solid rgba(59, 130, 246, 0.4)', color: '#60a5fa' }}>
-                          v: {v.name}
+                    </td>
+
+                    {/* Summary */}
+                    <td>
+                      <div style={{ fontWeight: 500, color: 'var(--text-primary)', maxWidth: '420px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={issue.fields?.summary}>
+                        {issue.fields?.summary}
+                      </div>
+                    </td>
+
+                    {/* Assignee (on team view) */}
+                    {activeTab === 'team' && (
+                      <td>
+                        <div className="flex items-center gap-2">
+                          {assigneeAvatar ? (
+                            <img src={assigneeAvatar} alt="" className="team-chip-avatar" />
+                          ) : (
+                            <User size={14} style={{ color: 'var(--accent-color)' }} />
+                          )}
+                          <span style={{ fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {assigneeName}
+                          </span>
+                        </div>
+                      </td>
+                    )}
+
+                    {/* Status */}
+                    <td>
+                      <span className={`jira-status-badge ${statusBadgeCls}`}>
+                        {statusName}
+                      </span>
+                    </td>
+
+                    {/* Priority */}
+                    <td>
+                      {priorityName ? (
+                        <span 
+                          className="tag"
+                          style={{ 
+                            background: 'rgba(255,255,255,0.04)', 
+                            border: `1px solid ${getPriorityColor(priorityName)}`, 
+                            color: getPriorityColor(priorityName) 
+                          }}
+                        >
+                          {priorityName}
                         </span>
-                      ))}
-                    </div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                      Updated: {new Date(issue.fields?.updated).toLocaleDateString()}
-                    </div>
-                  </div>
-                  <div style={{ color: 'var(--text-secondary)', fontSize: '1rem', marginTop: '0.25rem' }}>
-                    {issue.fields?.summary}
-                  </div>
-                  <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.5rem', opacity: 0.7 }}>
-                    Type: {issue.fields?.issuetype?.name} | Created: {new Date(issue.fields?.created).toLocaleDateString()}
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)' }}>-</span>
+                      )}
+                    </td>
+
+                    {/* Fix Versions */}
+                    <td>
+                      {fixVersions.length > 0 ? (
+                        <div className="flex gap-1 flex-wrap">
+                          {fixVersions.map(v => (
+                            <span key={v.id || v.name} className="tag" style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
+                              {v.name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>None</span>
+                      )}
+                    </td>
+
+                    {/* Updated */}
+                    <td>
+                      <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                        {issue.fields?.updated ? new Date(issue.fields.updated).toLocaleDateString() : '-'}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

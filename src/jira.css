@@ -214,3 +214,154 @@
 .holiday-btn.is-holiday:hover {
   background: rgba(239, 68, 68, 0.1);
 }
+
+/* Jira Issues Table and Team Management Styles */
+.jira-issues-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.jira-issues-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  text-align: left;
+}
+
+.jira-issues-table th {
+  padding: 0.85rem 1rem;
+  background: rgba(30, 41, 59, 0.8);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+.jira-issues-table td {
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+
+.jira-issues-table tr:hover td {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.jira-ticket-key-link {
+  font-weight: 600;
+  color: var(--accent-hover);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+}
+
+.jira-ticket-key-link:hover {
+  text-decoration: underline;
+}
+
+/* Team Member Chips */
+.team-members-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-color);
+}
+
+.team-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.team-chip:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.team-chip.active {
+  background: rgba(59, 130, 246, 0.2);
+  color: var(--accent-hover);
+  border-color: var(--accent-color);
+  font-weight: 600;
+}
+
+.team-chip-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.team-chip-remove {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-left: 2px;
+  border-radius: 50%;
+  transition: color 0.15s ease;
+}
+
+.team-chip-remove:hover {
+  color: var(--danger-color);
+}
+
+.user-search-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 200;
+  width: 320px;
+  max-height: 280px;
+  overflow-y: auto;
+  border-radius: 8px;
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  padding: 0.35rem;
+}
+
+.user-search-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.user-search-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.user-search-item.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
