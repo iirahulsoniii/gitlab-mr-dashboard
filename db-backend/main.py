@@ -77,7 +77,7 @@ def get_db_connection(environment: str, config: Optional[dict] = None, connectio
             raise HTTPException(status_code=400, detail=f"Incomplete connection details for '{conn_name}'. Please verify user, password, and DSN in Settings.")
             
         try:
-            return oracledb.connect(user=user, password=password, dsn=dsn)
+            return oracledb.connect(user=user, password=password, dsn=dsn, tcp_connect_timeout=8)
         except Exception as e:
             conn_name = connection.get('name') or f"{env.upper()} Connection"
             raise HTTPException(status_code=500, detail=f"Database connection failed for '{conn_name}': {str(e)}")
@@ -103,7 +103,7 @@ def get_db_connection(environment: str, config: Optional[dict] = None, connectio
             raise HTTPException(status_code=400, detail=f"Incomplete UI DB configuration for {environment}. Please provide a DSN or ensure Host/Port/Service are in .env.")
             
         try:
-            return oracledb.connect(user=user, password=password, dsn=dsn)
+            return oracledb.connect(user=user, password=password, dsn=dsn, tcp_connect_timeout=8)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Database connection failed (via UI config): {str(e)}")
 
@@ -119,7 +119,7 @@ def get_db_connection(environment: str, config: Optional[dict] = None, connectio
         
     try:
         dsn = oracledb.makedsn(host, int(port), service_name=service)
-        conn = oracledb.connect(user=user, password=password, dsn=dsn)
+        conn = oracledb.connect(user=user, password=password, dsn=dsn, tcp_connect_timeout=8)
         return conn
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
@@ -130,14 +130,19 @@ async def get_tables(req: TablesRequest):
     try:
         conn = get_db_connection(req.environment, req.db_config, req.connection)
         cur = conn.cursor()
-        # Fetch user_tables
-        cur.execute("SELECT table_name FROM user_tables ORDER BY table_name")
+        # Fetch user_tables and user_views (fast direct dictionary query)
+        cur.execute("""
+            SELECT table_name FROM user_tables
+            UNION
+            SELECT view_name AS table_name FROM user_views
+            ORDER BY 1
+        """)
         tables = [row[0] for row in cur.fetchall()]
         if not tables:
             # Fallback to all_tables for current schema owner
             cur.execute("SELECT table_name FROM all_tables WHERE owner = USER ORDER BY table_name")
             tables = [row[0] for row in cur.fetchall()]
-        return {"tables": tables, "status": "success"}
+        return {"tables": tables, "status": "success", "count": len(tables)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to fetch tables: {str(e)}")
     finally:

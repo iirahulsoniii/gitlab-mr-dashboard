@@ -22,10 +22,14 @@ FROM ocp_otp
 ORDER BY otp_id DESC 
 FETCH FIRST 10 ROWS ONLY`;
 
-export default function DBDashboard({ dbConfig }) {
+export default function DBDashboard({ dbConfig = {} }) {
   const connections = useMemo(() => {
-    if (Array.isArray(dbConfig?.connections)) return dbConfig.connections;
-    if (Array.isArray(dbConfig)) return dbConfig;
+    if (Array.isArray(dbConfig?.connections) && dbConfig.connections.length > 0) {
+      return dbConfig.connections;
+    }
+    if (Array.isArray(dbConfig) && dbConfig.length > 0) {
+      return dbConfig;
+    }
     const conns = [];
     if (dbConfig?.stage && (dbConfig.stage.user || dbConfig.stage.dsn)) {
       conns.push({ id: 'stage-default', name: 'Stage DB (Default)', environment: 'stage', ...dbConfig.stage });
@@ -33,18 +37,22 @@ export default function DBDashboard({ dbConfig }) {
     if (dbConfig?.prod && (dbConfig.prod.user || dbConfig.prod.dsn)) {
       conns.push({ id: 'prod-default', name: 'Prod DB (Default)', environment: 'prod', ...dbConfig.prod });
     }
-    if (conns.length === 0) {
-      conns.push({ id: 'stage-default', name: 'Stage DB', environment: 'stage', user: '', dsn: '' });
-    }
-    return conns;
+    if (conns.length > 0) return conns;
+
+    return [
+      { id: 'stage-default', name: 'Stage DB', environment: 'stage', user: dbConfig?.stage?.user || '', password: dbConfig?.stage?.password || '', dsn: dbConfig?.stage?.dsn || '' },
+      { id: 'prod-default', name: 'Prod DB', environment: 'prod', user: dbConfig?.prod?.user || '', password: dbConfig?.prod?.password || '', dsn: dbConfig?.prod?.dsn || '' }
+    ];
   }, [dbConfig]);
 
   const [activeConnId, setActiveConnId] = useState(() => {
-    return localStorage.getItem('db_active_conn_id') || (connections.length > 0 ? connections[0].id : 'stage-default');
+    const saved = localStorage.getItem('db_active_conn_id');
+    if (saved && connections.some(c => c.id === saved)) return saved;
+    return connections[0]?.id || 'stage-default';
   });
 
   const activeConn = useMemo(() => {
-    return connections.find(c => c.id === activeConnId) || connections[0] || { environment: 'stage' };
+    return connections.find(c => c.id === activeConnId) || connections[0];
   }, [connections, activeConnId]);
 
   const environment = activeConn.environment || 'stage';
@@ -53,6 +61,7 @@ export default function DBDashboard({ dbConfig }) {
   const [savedQueries, setSavedQueries] = useState(() => JSON.parse(localStorage.getItem('db_saved_queries') || '{}'));
   const [tables, setTables] = useState([]);
   const [loadingTables, setLoadingTables] = useState(false);
+  const [tableError, setTableError] = useState(null);
   const [tableSearch, setTableSearch] = useState('');
   const [isTableDropdownOpen, setIsTableDropdownOpen] = useState(false);
   const [selectedTable, setSelectedTable] = useState('');
@@ -62,10 +71,14 @@ export default function DBDashboard({ dbConfig }) {
   const [successMsg, setSuccessMsg] = useState(null);
   const [search, setSearch] = useState('');
   const abortControllerRef = useRef(null);
+  const tablesAbortControllerRef = useRef(null);
   const dropdownRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem('db_active_conn_id', activeConnId);
+    setTables([]);
+    setSelectedTable('');
+    setTableError(null);
   }, [activeConnId]);
 
   useEffect(() => {
@@ -89,8 +102,15 @@ export default function DBDashboard({ dbConfig }) {
   }, []);
 
   const loadTables = async () => {
-    // Only attempt if connection details or .env are present
+    if (tablesAbortControllerRef.current) {
+      tablesAbortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    tablesAbortControllerRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
     setLoadingTables(true);
+    setTableError(null);
     try {
       const res = await fetch('/db-api/api/tables', {
         method: 'POST',
@@ -99,15 +119,27 @@ export default function DBDashboard({ dbConfig }) {
           environment: activeConn.environment || 'stage', 
           connection: activeConn,
           db_config: dbConfig 
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.tables) {
         setTables(data.tables);
+        setTableError(null);
+      } else {
+        const errorDetail = data.detail || `Server returned ${res.status}: ${res.statusText}`;
+        setTableError(errorDetail);
       }
     } catch (e) {
+      if (e.name === 'AbortError') {
+        setTableError('Connection timed out (12s). Check DB host, DSN, or VPN.');
+      } else {
+        setTableError(e.message || 'Failed to connect to database backend.');
+      }
       console.warn('Could not load tables:', e);
     } finally {
+      clearTimeout(timeoutId);
       setLoadingTables(false);
     }
   };
@@ -115,7 +147,7 @@ export default function DBDashboard({ dbConfig }) {
   const handleToggleTableDropdown = () => {
     const willOpen = !isTableDropdownOpen;
     setIsTableDropdownOpen(willOpen);
-    if (willOpen && tables.length === 0) {
+    if (willOpen && (tables.length === 0 || tableError)) {
       loadTables();
     }
   };
@@ -426,7 +458,20 @@ FETCH FIRST 10 ROWS ONLY`;
                 </div>
 
                 <div style={{ overflowY: 'auto', maxHeight: '220px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  {filteredTables.length === 0 ? (
+                  {tableError ? (
+                    <div style={{ padding: '0.75rem', textAlign: 'center', color: 'var(--danger-color)', fontSize: '0.82rem', background: 'rgba(239, 68, 68, 0.1)', borderRadius: '6px', margin: '0.25rem 0' }}>
+                      <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Failed to load tables</div>
+                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '0.5rem', wordBreak: 'break-word' }}>{tableError}</div>
+                      <button 
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={loadTables}
+                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', margin: '0 auto', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        <RefreshCcw size={12} /> Retry
+                      </button>
+                    </div>
+                  ) : filteredTables.length === 0 ? (
                     <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
                       {loadingTables ? 'Loading schema tables...' : 'No matching tables found.'}
                     </div>
