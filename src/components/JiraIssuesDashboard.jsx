@@ -647,7 +647,7 @@ export default function JiraIssuesDashboard({ config }) {
               onClick={() => setSelectedTeamMemberId('all')}
             >
               <Users size={13} />
-              <span>All {activeTeam.name} Members ({rawActiveIssues.length})</span>
+              <span>All Issues ({rawActiveIssues.length})</span>
             </button>
 
             {activeTeam.members.map(member => {
