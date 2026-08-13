@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Play, Database, Server, AlertCircle, CheckCircle2, Search, Loader2, XCircle } from 'lucide-react';
+import { Play, Database, Server, AlertCircle, CheckCircle2, Search, Loader2, XCircle, RefreshCcw } from 'lucide-react';
 import { debouncedSaveServerStorage } from '../storageApi';
 import '../db.css';
 
@@ -14,6 +14,7 @@ const PAYMENT_QUERY = `SELECT
     merchant_id,
     status_message
 FROM ocp_payment_request
+WHERE trunc(update_date) = trunc(sysdate)
 ORDER BY update_date DESC
 FETCH FIRST 20 ROWS ONLY`;
 
@@ -23,6 +24,7 @@ ORDER BY otp_id DESC
 FETCH FIRST 10 ROWS ONLY`;
 
 export default function DBDashboard({ dbConfig = {} }) {
+  // Support multi-database connections: user-defined or default Stage/Prod
   const connections = useMemo(() => {
     if (Array.isArray(dbConfig?.connections) && dbConfig.connections.length > 0) {
       return dbConfig.connections;
@@ -47,12 +49,19 @@ export default function DBDashboard({ dbConfig = {} }) {
 
   const [activeConnId, setActiveConnId] = useState(() => {
     const saved = localStorage.getItem('db_active_conn_id');
-    if (saved && connections.some(c => c.id === saved)) return saved;
+    if (saved && connections.some(c => c && c.id === saved)) return saved;
     return connections[0]?.id || 'stage-default';
   });
 
   const activeConn = useMemo(() => {
-    return connections.find(c => c.id === activeConnId) || connections[0];
+    return connections.find(c => c && c.id === activeConnId) || connections[0] || {
+      id: 'stage-default',
+      name: 'Database',
+      environment: 'stage',
+      user: '',
+      password: '',
+      dsn: ''
+    };
   }, [connections, activeConnId]);
 
   const environment = activeConn.environment || 'stage';
@@ -74,6 +83,7 @@ export default function DBDashboard({ dbConfig = {} }) {
   const tablesAbortControllerRef = useRef(null);
   const dropdownRef = useRef(null);
 
+  // When active connection changes, reset table list and errors
   useEffect(() => {
     localStorage.setItem('db_active_conn_id', activeConnId);
     setTables([]);
@@ -124,19 +134,22 @@ export default function DBDashboard({ dbConfig = {} }) {
       });
       clearTimeout(timeoutId);
       const data = await res.json().catch(() => ({}));
-      if (res.ok && data.tables) {
+      if (res.ok && Array.isArray(data.tables)) {
         setTables(data.tables);
         setTableError(null);
       } else {
         const errorDetail = data.detail || `Server returned ${res.status}: ${res.statusText}`;
         setTableError(errorDetail);
+        setTables([]);
       }
     } catch (e) {
+      clearTimeout(timeoutId);
       if (e.name === 'AbortError') {
         setTableError('Connection timed out (12s). Check DB host, DSN, or VPN.');
       } else {
         setTableError(e.message || 'Failed to connect to database backend.');
       }
+      setTables([]);
       console.warn('Could not load tables:', e);
     } finally {
       clearTimeout(timeoutId);
@@ -162,9 +175,10 @@ FETCH FIRST 10 ROWS ONLY`;
   };
 
   const filteredTables = useMemo(() => {
-    if (!tableSearch.trim()) return tables;
+    if (!Array.isArray(tables)) return [];
+    if (!tableSearch || !tableSearch.trim()) return tables;
     const term = tableSearch.toLowerCase();
-    return tables.filter(t => t.toLowerCase().includes(term));
+    return tables.filter(t => typeof t === 'string' && t.toLowerCase().includes(term));
   }, [tables, tableSearch]);
 
   const saveCurrentQuery = () => {
@@ -192,7 +206,8 @@ FETCH FIRST 10 ROWS ONLY`;
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
-    abortControllerRef.current = new AbortController();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     
     setLoading(true);
     setError(null);
@@ -200,71 +215,53 @@ FETCH FIRST 10 ROWS ONLY`;
     setResult(null);
     setSearch('');
 
-    let attempt = 0;
-    while (true) {
-      attempt++;
-      try {
-        const res = await fetch('/db-api/api/query', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            environment: activeConn.environment || 'stage', 
-            query, 
-            connection: activeConn,
-            db_config: dbConfig 
-          }),
-          signal: abortControllerRef.current.signal
-        });
-        
-        const data = await res.json().catch(() => ({}));
-        
-        if (!res.ok) {
-          throw new Error(data.detail || `Server returned error (${res.status} ${res.statusText}). Make sure the backend is running on port 8000.`);
-        }
+    const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s safety timeout
 
-        if (data.data) {
-          setResult({ columns: data.columns, data: data.data });
+    try {
+      const res = await fetch('/db-api/api/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          environment: activeConn.environment || 'stage', 
+          query, 
+          connection: activeConn,
+          db_config: dbConfig 
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      
+      const data = await res.json().catch(() => ({}));
+      
+      if (!res.ok) {
+        const errorDetail = data.detail || `Server returned error (${res.status} ${res.statusText}).`;
+        setError(errorDetail);
+        setLoading(false);
+        return;
+      }
+
+      if (data.data) {
+        setResult({ columns: data.columns || [], data: data.data || [] });
+      } else {
+        setSuccessMsg(data.message || 'Query executed successfully with 0 rows returned.');
+      }
+      setError(null);
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') {
+        setError('Query execution timed out after 20 seconds or was cancelled. Please check DB host, DSN, or VPN.');
+      } else {
+        const msg = err.message || 'Failed to execute query.';
+        if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+          setError('Cannot reach database backend. Make sure FastAPI is running on port 8000.');
         } else {
-          setSuccessMsg(data.message || 'Query executed successfully.');
-        }
-        setError(null);
-        break; // Successfully connected and executed!
-      } catch (err) {
-        if (err.name === 'AbortError') {
-          setError('Query execution cancelled.');
-          break;
-        }
-        
-        const msg = err.message || '';
-        const isListenerRefused = msg.includes('DPY-6005') || msg.includes('DPY-6000') || msg.includes('Listener refused connection') || msg.includes('12516') || msg.includes('12520');
-        
-        if (isListenerRefused) {
-          setError(`Oracle Listener busy (ORA-12516 / DPY-6005). Retrying in 2 seconds... (Attempt #${attempt})`);
-          // Wait 2 seconds before retrying (respecting cancel/abort)
-          await new Promise((resolve) => {
-            const timeoutId = setTimeout(resolve, 2000);
-            if (abortControllerRef.current?.signal) {
-              abortControllerRef.current.signal.addEventListener('abort', () => {
-                clearTimeout(timeoutId);
-                resolve();
-              }, { once: true });
-            }
-          });
-          if (abortControllerRef.current?.signal?.aborted) {
-            setError('Query execution cancelled.');
-            break;
-          }
-        } else {
-          if (msg.includes('Failed to fetch') || msg.includes('Proxy Error') || msg.includes('500') || msg.includes('502')) {
-            setError(`Cannot reach backend server. Please verify FastAPI is running at http://localhost:8000 (run: npm run dev). ${msg}`);
-          } else {
-            setError(msg);
-          }
-          break;
+          setError(msg);
         }
       }
+    } finally {
+      clearTimeout(timeoutId);
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const renderCellContent = (val) => {
@@ -319,29 +316,26 @@ FETCH FIRST 10 ROWS ONLY`;
     const lowerSearch = search.toLowerCase();
     return result.data.filter(row => 
       Object.values(row).some(val => 
-        val && String(val).toLowerCase().includes(lowerSearch)
+        String(val).toLowerCase().includes(lowerSearch)
       )
     );
   }, [result, search]);
 
   return (
-    <div className="flex-col gap-6" style={{ marginTop: '1rem' }}>
-      <div className="flex justify-between items-center glass" style={{ padding: '1rem 1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+    <div className="flex-col gap-6" style={{ marginTop: '0.5rem' }}>
+      <div className="glass flex justify-between items-center" style={{ padding: '1rem 1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div className="flex items-center gap-3">
-          <h2 className="flex items-center gap-2" style={{ margin: 0, fontSize: '1.25rem' }}>
-            <Database size={20} className="text-accent" /> Query Runner
-          </h2>
-          <span className="tag" style={{ background: activeConn.environment === 'prod' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.2)', color: activeConn.environment === 'prod' ? '#ef4444' : '#60a5fa', fontWeight: 600 }}>
-            {activeConn.name || activeConn.environment?.toUpperCase()}
-          </span>
+          <Database size={22} style={{ color: 'var(--accent-color)' }} />
+          <h3 style={{ margin: 0 }}>Oracle Database Explorer</h3>
         </div>
         
-        {/* Multi-Database Connection Selector */}
+        {/* Dynamic Multi-Connection Switcher */}
         <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Connection:</span>
           {connections.map(conn => {
+            if (!conn) return null;
             const isActive = conn.id === activeConnId;
-            const isProd = conn.environment === 'prod';
+            const isProd = (conn.environment || '').toLowerCase() === 'prod' || (conn.name || '').toLowerCase().includes('prod');
             return (
               <button 
                 key={conn.id}
@@ -402,7 +396,7 @@ FETCH FIRST 10 ROWS ONLY`;
               }}
             >
               <Database size={14} />
-              {selectedTable ? `Table: ${selectedTable}` : `Explore Tables (${tables.length})`}
+              {selectedTable ? `Table: ${selectedTable}` : `Explore Tables (${Array.isArray(tables) ? tables.length : 0})`}
               {loadingTables && <Loader2 size={12} className="spinner" />}
             </button>
 
@@ -580,9 +574,12 @@ FETCH FIRST 10 ROWS ONLY`;
       </div>
 
       {error && (
-        <div className="glass flex items-center gap-2" style={{ padding: '1rem', borderColor: 'var(--danger-color)', color: 'var(--danger-color)' }}>
-          <AlertCircle size={20} />
-          {error}
+        <div className="glass flex items-center gap-3" style={{ padding: '1rem 1.25rem', borderColor: 'var(--danger-color)', color: 'var(--danger-color)', background: 'rgba(239, 68, 68, 0.08)', borderRadius: '8px', wordBreak: 'break-word' }}>
+          <AlertCircle size={22} style={{ flexShrink: 0 }} />
+          <div className="flex-col" style={{ flexGrow: 1 }}>
+            <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Query Execution Error</span>
+            <span style={{ fontSize: '0.85rem', marginTop: '2px', color: 'var(--text-primary)' }}>{error}</span>
+          </div>
         </div>
       )}
 
@@ -619,15 +616,17 @@ FETCH FIRST 10 ROWS ONLY`;
                 <thead>
                   <tr style={{ borderBottom: '2px solid var(--border-color)' }}>
                     {result.columns.map(col => (
-                      <th key={col} style={{ textAlign: 'left', padding: '0.75rem 1rem', color: 'var(--text-secondary)', fontWeight: 600 }}>{col}</th>
+                      <th key={col} style={{ textAlign: 'left', padding: '0.75rem 1rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                        {col}
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredData.map((row, idx) => (
-                    <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                  {filteredData.map((row, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid var(--border-color)', transition: 'background-color 0.2s' }}>
                       {result.columns.map(col => (
-                        <td key={col} style={{ padding: '0.75rem 1rem', color: 'var(--text-primary)', verticalAlign: 'top' }}>
+                        <td key={col} style={{ padding: '0.75rem 1rem' }}>
                           {renderCellContent(row[col])}
                         </td>
                       ))}
@@ -636,23 +635,8 @@ FETCH FIRST 10 ROWS ONLY`;
                 </tbody>
               </table>
             ) : (
-              <div style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem' }}>
-                {result.data.length === 0 ? (
-                  <>
-                    <Database size={32} style={{ opacity: 0.4 }} />
-                    <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>Table is currently empty</div>
-                    <div style={{ fontSize: '0.85rem' }}>
-                      Query executed successfully, but returned <strong>0 rows</strong> in <strong>{activeConn.name || environment.toUpperCase()}</strong>.
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div>No rows match your filter "<strong>{search}</strong>" (out of {result.data.length} rows).</div>
-                    <button className="btn" onClick={() => setSearch('')} style={{ fontSize: '0.8rem', padding: '0.25rem 0.75rem' }}>
-                      Clear Filter
-                    </button>
-                  </>
-                )}
+              <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
+                No records match your filter criteria.
               </div>
             )}
           </div>

@@ -63,23 +63,26 @@ def get_db_connection(environment: str, config: Optional[dict] = None, connectio
         password = connection.get('password')
         dsn = connection.get('dsn')
         env = connection.get('environment') or environment or "stage"
-        prefix = "STAGE_DB_" if env.lower() == "stage" else "PROD_DB_"
+        prefix = "STAGE_DB_" if str(env).lower() == "stage" else "PROD_DB_"
+        
+        if isinstance(user, str): user = user.strip()
+        if isinstance(dsn, str): dsn = dsn.strip()
         
         if not dsn:
             host = os.getenv(f"{prefix}HOST")
             port = os.getenv(f"{prefix}PORT")
             service = os.getenv(f"{prefix}SERVICE")
             if host and port and service:
-                dsn = oracledb.makedsn(host, int(port), service_name=service)
+                dsn = oracledb.makedsn(host.strip(), int(port), service_name=service.strip())
                 
         if not all([user, password, dsn]):
-            conn_name = connection.get('name') or f"{env.upper()} Connection"
+            conn_name = connection.get('name') or f"{str(env).upper()} Connection"
             raise HTTPException(status_code=400, detail=f"Incomplete connection details for '{conn_name}'. Please verify user, password, and DSN in Settings.")
             
         try:
             return oracledb.connect(user=user, password=password, dsn=dsn, tcp_connect_timeout=8)
         except Exception as e:
-            conn_name = connection.get('name') or f"{env.upper()} Connection"
+            conn_name = connection.get('name') or f"{str(env).upper()} Connection"
             raise HTTPException(status_code=500, detail=f"Database connection failed for '{conn_name}': {str(e)}")
 
     prefix = "STAGE_DB_" if (environment or "").lower() == "stage" else "PROD_DB_"
@@ -90,14 +93,17 @@ def get_db_connection(environment: str, config: Optional[dict] = None, connectio
         user = env_config.get('user')
         password = env_config.get('password')
         
+        if isinstance(user, str): user = user.strip()
+        
         # If DSN is provided in UI, use it. Otherwise, construct from .env
         dsn = env_config.get('dsn')
+        if isinstance(dsn, str): dsn = dsn.strip()
         if not dsn:
             host = os.getenv(f"{prefix}HOST")
             port = os.getenv(f"{prefix}PORT")
             service = os.getenv(f"{prefix}SERVICE")
             if host and port and service:
-                dsn = oracledb.makedsn(host, int(port), service_name=service)
+                dsn = oracledb.makedsn(host.strip(), int(port), service_name=service.strip())
         
         if not all([user, password, dsn]):
             raise HTTPException(status_code=400, detail=f"Incomplete UI DB configuration for {environment}. Please provide a DSN or ensure Host/Port/Service are in .env.")
@@ -118,8 +124,8 @@ def get_db_connection(environment: str, config: Optional[dict] = None, connectio
         raise HTTPException(status_code=500, detail=f"Database configuration for {environment} is incomplete (no UI config, and missing .env).")
         
     try:
-        dsn = oracledb.makedsn(host, int(port), service_name=service)
-        conn = oracledb.connect(user=user, password=password, dsn=dsn, tcp_connect_timeout=8)
+        dsn = oracledb.makedsn(host.strip(), int(port), service_name=service.strip())
+        conn = oracledb.connect(user=user.strip(), password=password, dsn=dsn, tcp_connect_timeout=8)
         return conn
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
