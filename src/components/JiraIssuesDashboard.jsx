@@ -3,6 +3,7 @@ import {
   fetchIssuesForAssignees, 
   searchJiraUsers 
 } from '../jiraApi';
+import { debouncedSaveServerStorage } from '../storageApi';
 import { 
   RefreshCcw, 
   Loader2, 
@@ -11,7 +12,11 @@ import {
   X, 
   Search, 
   ExternalLink, 
-  Calendar 
+  Calendar,
+  Plus,
+  Trash2,
+  Edit2,
+  Check
 } from 'lucide-react';
 import '../jira.css';
 
@@ -25,21 +30,41 @@ export default function JiraIssuesDashboard({ config }) {
   const [loadingTeam, setLoadingTeam] = useState(false);
   const [error, setError] = useState('');
 
-  // Team Members
-  const [teamMembers, setTeamMembers] = useState(() => {
-    const saved = localStorage.getItem('jira_team_members');
-    if (saved) {
+  // Multiple Teams State
+  const [teams, setTeams] = useState(() => {
+    const savedTeams = localStorage.getItem('jira_teams_data');
+    if (savedTeams) {
       try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        const parsed = JSON.parse(savedTeams);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       } catch (e) {
-        console.error('Error parsing team members:', e);
+        console.error('Error parsing teams data:', e);
       }
     }
-    return [];
+    // Check legacy single team
+    const savedLegacy = localStorage.getItem('jira_team_members');
+    if (savedLegacy) {
+      try {
+        const parsed = JSON.parse(savedLegacy);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return [{ id: 'team-default', name: 'My Team', members: parsed }];
+        }
+      } catch (e) {}
+    }
+    return [{ id: 'team-1', name: 'Core Team', members: [] }];
+  });
+
+  const [activeTeamId, setActiveTeamId] = useState(() => {
+    return teams[0]?.id || 'team-1';
   });
 
   const [selectedTeamMemberId, setSelectedTeamMemberId] = useState('all');
+
+  // Team creation / editing UI states
+  const [isCreatingTeam, setIsCreatingTeam] = useState(false);
+  const [newTeamName, setNewTeamName] = useState('');
+  const [isEditingTeamName, setIsEditingTeamName] = useState(false);
+  const [editingTeamNameText, setEditingTeamNameText] = useState('');
 
   // Team member user search state
   const [userSearchQuery, setUserSearchQuery] = useState('');
@@ -56,10 +81,28 @@ export default function JiraIssuesDashboard({ config }) {
   const [includeClosed, setIncludeClosed] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Sync team members to localStorage
+  // Active team resolution
+  const activeTeam = useMemo(() => {
+    return teams.find(t => t.id === activeTeamId) || teams[0] || { id: 'team-1', name: 'My Team', members: [] };
+  }, [teams, activeTeamId]);
+
+  // Keep activeTeamId valid
   useEffect(() => {
-    localStorage.setItem('jira_team_members', JSON.stringify(teamMembers));
-  }, [teamMembers]);
+    if (teams.length > 0 && !teams.find(t => t.id === activeTeamId)) {
+      setActiveTeamId(teams[0].id);
+    }
+  }, [teams, activeTeamId]);
+
+  // Sync teams to localStorage & local disk persistence
+  useEffect(() => {
+    localStorage.setItem('jira_teams_data', JSON.stringify(teams));
+    debouncedSaveServerStorage({ jiraTeams: teams, teamMembers: activeTeam.members });
+  }, [teams, activeTeam]);
+
+  // Reset member filter on team switch
+  useEffect(() => {
+    setSelectedTeamMemberId('all');
+  }, [activeTeamId]);
 
   // Load My Issues on mount or filter changes
   useEffect(() => {
@@ -70,14 +113,14 @@ export default function JiraIssuesDashboard({ config }) {
     }
   }, [config, daysFilter, includeClosed]);
 
-  // Load Team Issues when team members or filters change
+  // Load Team Issues when active team members or filters change
   useEffect(() => {
-    if (config.email && config.token && teamMembers.length > 0) {
+    if (config.email && config.token && activeTeam.members.length > 0) {
       loadTeamIssues();
     } else {
       setTeamIssues([]);
     }
-  }, [config, daysFilter, includeClosed, teamMembers]);
+  }, [config, daysFilter, includeClosed, activeTeam.id, activeTeam.members]);
 
   // Debounced search for Jira users
   useEffect(() => {
@@ -131,14 +174,14 @@ export default function JiraIssuesDashboard({ config }) {
   };
 
   const loadTeamIssues = async () => {
-    if (teamMembers.length === 0) {
+    if (!activeTeam.members || activeTeam.members.length === 0) {
       setTeamIssues([]);
       return;
     }
     setLoadingTeam(true);
     setError('');
     try {
-      const accountIds = teamMembers.map(m => m.accountId).filter(Boolean);
+      const accountIds = activeTeam.members.map(m => m.accountId).filter(Boolean);
       const data = await fetchIssuesForAssignees(config, {
         accountIds,
         days: daysFilter,
@@ -152,9 +195,47 @@ export default function JiraIssuesDashboard({ config }) {
     }
   };
 
+  // Team Operations
+  const handleCreateTeam = (e) => {
+    e.preventDefault();
+    const name = newTeamName.trim();
+    if (!name) return;
+
+    const newTeam = {
+      id: `team-${Date.now()}`,
+      name,
+      members: []
+    };
+    setTeams(prev => [...prev, newTeam]);
+    setActiveTeamId(newTeam.id);
+    setNewTeamName('');
+    setIsCreatingTeam(false);
+  };
+
+  const handleSaveTeamName = () => {
+    const name = editingTeamNameText.trim();
+    if (!name) return;
+    setTeams(prev => prev.map(t => t.id === activeTeam.id ? { ...t, name } : t));
+    setIsEditingTeamName(false);
+  };
+
+  const handleDeleteTeam = (teamId, e) => {
+    e.stopPropagation();
+    if (teams.length <= 1) {
+      alert('You must have at least one team.');
+      return;
+    }
+    if (window.confirm(`Are you sure you want to delete "${activeTeam.name}"?`)) {
+      const remaining = teams.filter(t => t.id !== teamId);
+      setTeams(remaining);
+      setActiveTeamId(remaining[0].id);
+    }
+  };
+
   const handleAddTeamMember = (user) => {
-    if (!teamMembers.some(m => m.accountId === user.accountId)) {
-      setTeamMembers([...teamMembers, user]);
+    if (!activeTeam.members.some(m => m.accountId === user.accountId)) {
+      const updatedMembers = [...activeTeam.members, user];
+      setTeams(prev => prev.map(t => t.id === activeTeam.id ? { ...t, members: updatedMembers } : t));
     }
     setUserSearchQuery('');
     setUserSearchResults([]);
@@ -163,7 +244,8 @@ export default function JiraIssuesDashboard({ config }) {
 
   const handleRemoveTeamMember = (accountId, e) => {
     e.stopPropagation();
-    setTeamMembers(teamMembers.filter(m => m.accountId !== accountId));
+    const updatedMembers = activeTeam.members.filter(m => m.accountId !== accountId);
+    setTeams(prev => prev.map(t => t.id === activeTeam.id ? { ...t, members: updatedMembers } : t));
     if (selectedTeamMemberId === accountId) {
       setSelectedTeamMemberId('all');
     }
@@ -195,8 +277,18 @@ export default function JiraIssuesDashboard({ config }) {
     return 'var(--text-secondary)';
   };
 
-  // Active issues based on active tab
-  const rawActiveIssues = activeTab === 'my' ? myIssues : teamIssues;
+  // Active raw issues based on active tab
+  const rawActiveIssues = useMemo(() => {
+    if (activeTab === 'my') return myIssues;
+
+    // Strict team check: ONLY include tickets whose assignee is in active team's members
+    if (!activeTeam.members || activeTeam.members.length === 0) return [];
+    const validAccountIds = new Set(activeTeam.members.map(m => m.accountId).filter(Boolean));
+    return teamIssues.filter(i => {
+      const accId = i.fields?.assignee?.accountId;
+      return accId && validAccountIds.has(accId);
+    });
+  }, [activeTab, myIssues, teamIssues, activeTeam]);
 
   // Filtered issues
   const filteredIssues = useMemo(() => {
@@ -235,7 +327,7 @@ export default function JiraIssuesDashboard({ config }) {
     });
   }, [rawActiveIssues, searchQuery, priorityFilter, statusFilter, fixVersionFilter, activeTab, selectedTeamMemberId]);
 
-  // Unique options for current view
+  // Unique filter options for current view
   const availablePriorities = useMemo(() => {
     const set = new Set(rawActiveIssues.map(i => i.fields?.priority?.name).filter(Boolean));
     return Array.from(set).sort();
@@ -256,17 +348,22 @@ export default function JiraIssuesDashboard({ config }) {
     return Array.from(set).sort();
   }, [rawActiveIssues]);
 
-  // Count tickets per team member
+  // Count tickets strictly per active team member
   const memberTicketCounts = useMemo(() => {
     const counts = {};
-    teamIssues.forEach(i => {
-      const accId = i.fields?.assignee?.accountId;
-      if (accId) {
-        counts[accId] = (counts[accId] || 0) + 1;
-      }
-    });
+    if (activeTab === 'team' && activeTeam.members) {
+      activeTeam.members.forEach(m => {
+        counts[m.accountId] = 0;
+      });
+      teamIssues.forEach(i => {
+        const accId = i.fields?.assignee?.accountId;
+        if (accId && counts[accId] !== undefined) {
+          counts[accId] += 1;
+        }
+      });
+    }
     return counts;
-  }, [teamIssues]);
+  }, [activeTab, activeTeam, teamIssues]);
 
   const currentLoading = activeTab === 'my' ? loadingMy : loadingTeam;
 
@@ -281,7 +378,7 @@ export default function JiraIssuesDashboard({ config }) {
 
   return (
     <div className="flex-col gap-5" style={{ marginTop: '0.5rem' }}>
-      {/* Top Tab Selector */}
+      {/* Top Main Tab Selector */}
       <div className="flex justify-between items-center flex-wrap gap-3">
         <div className="glass flex" style={{ padding: '0.25rem', borderRadius: '10px', background: 'rgba(255,255,255,0.05)' }}>
           <button 
@@ -312,7 +409,7 @@ export default function JiraIssuesDashboard({ config }) {
           >
             <Users size={16} /> My Team Issues
             <span className="tag" style={{ background: activeTab === 'team' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.08)', color: activeTab === 'team' ? 'var(--accent-color)' : 'var(--text-secondary)', marginLeft: '4px' }}>
-              {teamIssues.length}
+              {rawActiveIssues.length}
             </span>
           </button>
         </div>
@@ -327,13 +424,144 @@ export default function JiraIssuesDashboard({ config }) {
         </button>
       </div>
 
-      {/* Team Member Manager (Visible on 'My Team Issues' tab) */}
+      {/* Multiple Teams & Team Member Management (Visible on 'My Team Issues' tab) */}
       {activeTab === 'team' && (
-        <div className="glass flex-col gap-3" style={{ padding: '1rem 1.25rem', borderRadius: '12px', border: '1px solid rgba(59, 130, 246, 0.25)', background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.8))' }}>
+        <div className="glass flex-col gap-4" style={{ padding: '1.25rem', borderRadius: '12px', border: '1px solid rgba(59, 130, 246, 0.25)', background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.8))' }}>
+          
+          {/* Row 1: Team Tabs & Create Team Action */}
+          <div className="flex justify-between items-center flex-wrap gap-2" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.08)', paddingBottom: '0.75rem' }}>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', fontWeight: 600, marginRight: '4px' }}>
+                Teams:
+              </span>
+
+              {teams.map(t => {
+                const isSelected = t.id === activeTeam.id;
+                return (
+                  <div key={t.id} className="flex items-center">
+                    <button
+                      className="btn"
+                      style={{
+                        padding: '0.35rem 0.75rem',
+                        fontSize: '0.82rem',
+                        background: isSelected ? 'var(--accent-color)' : 'rgba(255, 255, 255, 0.05)',
+                        color: isSelected ? '#fff' : 'var(--text-secondary)',
+                        borderColor: isSelected ? 'var(--accent-color)' : 'var(--border-color)',
+                        fontWeight: isSelected ? 600 : 500,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                      onClick={() => setActiveTeamId(t.id)}
+                    >
+                      <Users size={13} />
+                      <span>{t.name}</span>
+                      <span className="tag" style={{ padding: '0.1rem 0.35rem', fontSize: '0.68rem', background: isSelected ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.08)', color: '#fff' }}>
+                        {t.members?.length || 0}
+                      </span>
+                    </button>
+                  </div>
+                );
+              })}
+
+              {/* Create New Team Inline Form / Button */}
+              {isCreatingTeam ? (
+                <form onSubmit={handleCreateTeam} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="Enter team name..."
+                    value={newTeamName}
+                    onChange={e => setNewTeamName(e.target.value)}
+                    autoFocus
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.08)',
+                      border: '1px solid var(--accent-color)',
+                      padding: '0.3rem 0.6rem',
+                      borderRadius: '6px',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.82rem',
+                      outline: 'none',
+                      width: '160px'
+                    }}
+                  />
+                  <button type="submit" className="btn btn-primary" style={{ padding: '0.3rem 0.6rem', fontSize: '0.78rem' }}>
+                    <Check size={13} /> Add
+                  </button>
+                  <button type="button" className="btn" onClick={() => setIsCreatingTeam(false)} style={{ padding: '0.3rem 0.5rem', fontSize: '0.78rem' }}>
+                    <X size={13} />
+                  </button>
+                </form>
+              ) : (
+                <button 
+                  className="btn" 
+                  onClick={() => setIsCreatingTeam(true)}
+                  style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', background: 'rgba(255, 255, 255, 0.04)', borderStyle: 'dashed' }}
+                  title="Create a new team"
+                >
+                  <Plus size={13} /> New Team
+                </button>
+              )}
+            </div>
+
+            {/* Active Team Edit Actions */}
+            <div className="flex items-center gap-2">
+              {isEditingTeamName ? (
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={editingTeamNameText}
+                    onChange={e => setEditingTeamNameText(e.target.value)}
+                    autoFocus
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.08)',
+                      border: '1px solid var(--accent-color)',
+                      padding: '0.25rem 0.5rem',
+                      borderRadius: '5px',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.82rem',
+                      outline: 'none'
+                    }}
+                  />
+                  <button onClick={handleSaveTeamName} className="btn btn-primary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}>
+                    Save
+                  </button>
+                  <button onClick={() => setIsEditingTeamName(false)} className="btn" style={{ padding: '0.25rem 0.4rem', fontSize: '0.75rem' }}>
+                    <X size={12} />
+                  </button>
+                </div>
+              ) : (
+                <button 
+                  className="btn" 
+                  onClick={() => {
+                    setEditingTeamNameText(activeTeam.name);
+                    setIsEditingTeamName(true);
+                  }}
+                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: 'transparent' }}
+                  title="Rename active team"
+                >
+                  <Edit2 size={12} /> Rename
+                </button>
+              )}
+
+              {teams.length > 1 && (
+                <button 
+                  className="btn" 
+                  onClick={(e) => handleDeleteTeam(activeTeam.id, e)}
+                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: 'transparent', color: 'var(--danger-color)' }}
+                  title="Delete this team"
+                >
+                  <Trash2 size={12} /> Delete
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Row 2: Add Team Member Search Box */}
           <div className="flex justify-between items-center flex-wrap gap-2">
             <div className="flex items-center gap-2">
-              <Users size={18} style={{ color: 'var(--accent-color)' }} />
-              <h4 style={{ margin: 0, fontSize: '0.95rem' }}>Team Members ({teamMembers.length})</h4>
+              <h4 style={{ margin: 0, fontSize: '0.95rem', color: 'var(--text-primary)' }}>
+                {activeTeam.name} Members ({activeTeam.members?.length || 0})
+              </h4>
             </div>
 
             {/* Add Team Member Search Box */}
@@ -342,7 +570,7 @@ export default function JiraIssuesDashboard({ config }) {
                 <Search size={14} style={{ color: 'var(--text-secondary)' }} />
                 <input 
                   type="text" 
-                  placeholder="Search & add team member..." 
+                  placeholder={`Add member to ${activeTeam.name}...`} 
                   value={userSearchQuery}
                   onChange={e => {
                     setUserSearchQuery(e.target.value);
@@ -373,7 +601,7 @@ export default function JiraIssuesDashboard({ config }) {
                     </div>
                   ) : (
                     userSearchResults.map(user => {
-                      const isAdded = teamMembers.some(m => m.accountId === user.accountId);
+                      const isAdded = activeTeam.members.some(m => m.accountId === user.accountId);
                       return (
                         <div 
                           key={user.accountId}
@@ -395,7 +623,7 @@ export default function JiraIssuesDashboard({ config }) {
                           </div>
                           {isAdded ? (
                             <span className="tag" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success-color)', fontSize: '0.7rem' }}>
-                              Added
+                              In Team
                             </span>
                           ) : (
                             <span className="tag" style={{ background: 'rgba(59, 130, 246, 0.15)', color: 'var(--accent-color)', fontSize: '0.7rem' }}>
@@ -411,7 +639,7 @@ export default function JiraIssuesDashboard({ config }) {
             </div>
           </div>
 
-          {/* Team Member Chips */}
+          {/* Row 3: Member Chips and Active Filtering */}
           <div className="team-members-bar">
             <button 
               type="button" 
@@ -419,10 +647,10 @@ export default function JiraIssuesDashboard({ config }) {
               onClick={() => setSelectedTeamMemberId('all')}
             >
               <Users size={13} />
-              <span>All Team Members ({teamIssues.length})</span>
+              <span>All {activeTeam.name} Members ({rawActiveIssues.length})</span>
             </button>
 
-            {teamMembers.map(member => {
+            {activeTeam.members.map(member => {
               const isSelected = selectedTeamMemberId === member.accountId;
               const count = memberTicketCounts[member.accountId] || 0;
 
@@ -446,7 +674,7 @@ export default function JiraIssuesDashboard({ config }) {
                     type="button" 
                     className="team-chip-remove"
                     onClick={(e) => handleRemoveTeamMember(member.accountId, e)}
-                    title={`Remove ${member.displayName} from team`}
+                    title={`Remove ${member.displayName} from ${activeTeam.name}`}
                   >
                     <X size={12} />
                   </button>
@@ -454,9 +682,9 @@ export default function JiraIssuesDashboard({ config }) {
               );
             })}
 
-            {teamMembers.length === 0 && (
+            {activeTeam.members.length === 0 && (
               <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                No team members added yet. Search and add team members above.
+                No members in "{activeTeam.name}" yet. Search and add team members above.
               </span>
             )}
           </div>
@@ -540,17 +768,17 @@ export default function JiraIssuesDashboard({ config }) {
         <div className="flex justify-center items-center" style={{ padding: '4rem' }}>
           <Loader2 className="spinner" size={32} style={{ color: 'var(--accent-color)' }} />
         </div>
-      ) : activeTab === 'team' && teamMembers.length === 0 ? (
+      ) : activeTab === 'team' && (!activeTeam.members || activeTeam.members.length === 0) ? (
         <div className="glass" style={{ padding: '3.5rem 2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
           <Users size={38} style={{ color: 'var(--accent-color)', opacity: 0.5, marginBottom: '0.75rem' }} />
-          <h3>No Team Members Configured</h3>
+          <h3>No Members in "{activeTeam.name}"</h3>
           <p style={{ fontSize: '0.9rem', maxWidth: '450px', margin: '0.5rem auto 1rem auto' }}>
-            Search and add team members using the bar above to track their assigned Jira tickets and workload.
+            Search and add team members using the search bar above to track their assigned Jira tickets and workload.
           </p>
         </div>
       ) : filteredIssues.length === 0 ? (
         <div className="glass" style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-          No issues found matching the selected filter criteria.
+          No issues found matching the selected filter criteria for {activeTab === 'team' ? activeTeam.name : 'your assigned issues'}.
         </div>
       ) : (
         <div className="jira-issues-table-wrap">

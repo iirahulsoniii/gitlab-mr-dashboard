@@ -144,6 +144,7 @@ export default function SettingsModal({
         savedQueries: JSON.parse(localStorage.getItem('db_saved_queries') || '{}'),
         jiraHolidays: JSON.parse(localStorage.getItem('jira_holidays') || '[]'),
         plannedReleases: JSON.parse(localStorage.getItem('planned_releases_data') || '[]'),
+        jiraTeams: JSON.parse(localStorage.getItem('jira_teams_data') || '[]'),
         teamMembers: JSON.parse(localStorage.getItem('jira_team_members') || '[]')
       };
       const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
@@ -218,7 +219,13 @@ export default function SettingsModal({
           }
         ],
         plannedReleases: [],
-        teamMembers: []
+        jiraTeams: [
+          {
+            id: "team-1",
+            name: "Core Team",
+            members: []
+          }
+        ]
       };
       const blob = new Blob([JSON.stringify(templateData, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -314,12 +321,21 @@ export default function SettingsModal({
           summaryParts.push(`${rawReleases.length} planned release(s)`);
         }
 
-        // Team members
+        // Team members & Multiple Teams
+        let importedTeams = null;
+        const rawTeams = parsed.jiraTeams || parsed.jira_teams_data || parsed.teams;
+        if (Array.isArray(rawTeams)) {
+          importedTeams = rawTeams;
+          summaryParts.push(`${rawTeams.length} team(s)`);
+        }
+
         let importedTeam = null;
         const rawTeam = parsed.teamMembers || parsed.jira_team_members || parsed.team;
         if (Array.isArray(rawTeam)) {
           importedTeam = rawTeam;
-          summaryParts.push(`${rawTeam.length} team member(s)`);
+          if (!importedTeams) {
+            summaryParts.push(`${rawTeam.length} team member(s)`);
+          }
         }
 
         if (summaryParts.length === 0) {
@@ -335,6 +351,7 @@ export default function SettingsModal({
             savedQueries: importedQueries,
             jiraHolidays: importedHolidays,
             plannedReleases: importedReleases,
+            jiraTeams: importedTeams,
             teamMembers: importedTeam
           });
         } else {
@@ -344,6 +361,7 @@ export default function SettingsModal({
           if (importedQueries) localStorage.setItem('db_saved_queries', JSON.stringify(importedQueries));
           if (importedHolidays) localStorage.setItem('jira_holidays', JSON.stringify(importedHolidays));
           if (importedReleases) localStorage.setItem('planned_releases_data', JSON.stringify(importedReleases));
+          if (importedTeams) localStorage.setItem('jira_teams_data', JSON.stringify(importedTeams));
           if (importedTeam) localStorage.setItem('jira_team_members', JSON.stringify(importedTeam));
         }
 

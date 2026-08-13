@@ -1,4 +1,6 @@
 import os
+import json
+from datetime import datetime
 from typing import Optional
 
 import oracledb
@@ -8,6 +10,26 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 load_dotenv()
+
+STORAGE_DIR = os.path.join(os.path.dirname(__file__), "data")
+STORAGE_FILE = os.path.join(STORAGE_DIR, "dashboard_storage.json")
+
+def read_storage() -> dict:
+    if not os.path.exists(STORAGE_FILE):
+        return {}
+    try:
+        with open(STORAGE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error reading storage file: {e}")
+        return {}
+
+def write_storage(data: dict):
+    os.makedirs(STORAGE_DIR, exist_ok=True)
+    temp_file = f"{STORAGE_FILE}.tmp"
+    with open(temp_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(temp_file, STORAGE_FILE)
 
 # Configure oracledb to fetch LOBs (CLOB, BLOB) directly as strings/bytes
 oracledb.defaults.fetch_lobs = False
@@ -180,3 +202,25 @@ async def execute_query(req: QueryRequest):
                 conn.close()
             except:
                 pass
+
+@app.get("/storage")
+def get_storage():
+    """Retrieve all persistent dashboard configurations and data stored on disk."""
+    return read_storage()
+
+@app.post("/storage")
+def save_storage(payload: dict):
+    """Save/update persistent dashboard configurations and data directly to disk."""
+    try:
+        current = read_storage()
+        current.update(payload)
+        current["lastSavedAt"] = datetime.utcnow().isoformat()
+        write_storage(current)
+        return {
+            "status": "success", 
+            "savedAt": current["lastSavedAt"], 
+            "keys": list(current.keys())
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save dashboard storage: {str(e)}")
+

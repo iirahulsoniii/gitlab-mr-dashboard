@@ -5,6 +5,7 @@ import {
   fetchAssignedIssues,
   fetchIssuesByFixVersion 
 } from '../jiraApi';
+import { debouncedSaveServerStorage } from '../storageApi';
 import { 
   Plus, 
   Trash2, 
@@ -296,9 +297,10 @@ export default function PlannedReleaseDashboard({ config }) {
 
   const [copiedRelease, setCopiedRelease] = useState(false);
 
-  // Sync to localStorage
+  // Sync to localStorage & local disk persistence
   useEffect(() => {
     localStorage.setItem('planned_releases_data', JSON.stringify(releases));
+    debouncedSaveServerStorage({ plannedReleases: releases });
   }, [releases]);
 
   // Keep activeReleaseId valid

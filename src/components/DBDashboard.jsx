@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Play, Database, Server, AlertCircle, CheckCircle2, Search, Loader2, XCircle } from 'lucide-react';
+import { debouncedSaveServerStorage } from '../storageApi';
 import '../db.css';
 
 const PAYMENT_QUERY = `SELECT
@@ -73,6 +74,7 @@ export default function DBDashboard({ dbConfig }) {
 
   useEffect(() => {
     localStorage.setItem('db_saved_queries', JSON.stringify(savedQueries));
+    debouncedSaveServerStorage({ savedQueries });
   }, [savedQueries]);
 
   // Close dropdown on outside click

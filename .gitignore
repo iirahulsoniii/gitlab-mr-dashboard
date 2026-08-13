@@ -27,3 +27,11 @@ dist-ssr
 db-backend/venv/
 db-backend/.env
 db-backend/__pycache__/
+
+# Local Dashboard Persistent Storage (Never push to git)
+db-backend/data/
+db-backend/data/*
+*.storage.json
+dashboard_storage.json
+dashboard-config-*.json
+storage_data.json

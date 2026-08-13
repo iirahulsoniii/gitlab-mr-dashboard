@@ -9,6 +9,7 @@ import JiraIssuesDashboard from './components/JiraIssuesDashboard';
 import PlannedReleaseDashboard from './components/PlannedReleaseDashboard';
 import { Settings, Database, ListFilter, FileText, CalendarClock, Code2, CheckSquare, Rocket } from 'lucide-react';
 import { fetchMergeRequests } from './api';
+import { fetchServerStorage, saveServerStorage, debouncedSaveServerStorage } from './storageApi';
 
 const DEFAULT_FILTERS = {
   author: '',
@@ -47,7 +48,7 @@ function App() {
 
   const [activeView, setActiveView] = useState('mr'); // 'mr', 'jira', 'db', or 'jira-issues'
   const [activeInstanceId, setActiveInstanceId] = useState(instances.length > 0 ? instances[0].id : null);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(instances.length === 0);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [mrs, setMrs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -56,6 +57,60 @@ function App() {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   
   const [activeTab, setActiveTab] = useState('mrs'); // 'mrs' or 'jira'
+
+  // Initialize from Persistent Server Storage on local disk
+  useEffect(() => {
+    async function initServerStorage() {
+      const serverData = await fetchServerStorage();
+      if (serverData && Object.keys(serverData).length > 0) {
+        if (serverData.gitInstances && Array.isArray(serverData.gitInstances) && serverData.gitInstances.length > 0) {
+          setInstances(serverData.gitInstances);
+          localStorage.setItem('git-dashboard-instances', JSON.stringify(serverData.gitInstances));
+          setActiveInstanceId(prev => {
+            if (prev && serverData.gitInstances.find(i => i.id === prev)) return prev;
+            return serverData.gitInstances[0].id;
+          });
+        }
+        if (serverData.jiraConfig) {
+          setJiraConfig(serverData.jiraConfig);
+          localStorage.setItem('jira-dashboard-config', JSON.stringify(serverData.jiraConfig));
+        }
+        if (serverData.dbConfig) {
+          setDbConfig(serverData.dbConfig);
+          localStorage.setItem('db-dashboard-config', JSON.stringify(serverData.dbConfig));
+        }
+        if (serverData.savedQueries) {
+          localStorage.setItem('db_saved_queries', JSON.stringify(serverData.savedQueries));
+        }
+        if (serverData.jiraHolidays) {
+          localStorage.setItem('jira_holidays', JSON.stringify(serverData.jiraHolidays));
+        }
+        if (serverData.plannedReleases) {
+          localStorage.setItem('planned_releases_data', JSON.stringify(serverData.plannedReleases));
+        }
+        if (serverData.jiraTeams) {
+          localStorage.setItem('jira_teams_data', JSON.stringify(serverData.jiraTeams));
+        }
+        if (serverData.teamMembers) {
+          localStorage.setItem('jira_team_members', JSON.stringify(serverData.teamMembers));
+        }
+      } else if (serverData) {
+        // Disk storage is empty: automatically migrate any existing localStorage data to disk!
+        const localData = {
+          gitInstances: JSON.parse(localStorage.getItem('git-dashboard-instances') || 'null'),
+          jiraConfig: JSON.parse(localStorage.getItem('jira-dashboard-config') || 'null'),
+          dbConfig: JSON.parse(localStorage.getItem('db-dashboard-config') || 'null'),
+          savedQueries: JSON.parse(localStorage.getItem('db_saved_queries') || '{}'),
+          jiraHolidays: JSON.parse(localStorage.getItem('jira_holidays') || '[]'),
+          plannedReleases: JSON.parse(localStorage.getItem('planned_releases_data') || '[]'),
+          jiraTeams: JSON.parse(localStorage.getItem('jira_teams_data') || '[]'),
+          teamMembers: JSON.parse(localStorage.getItem('jira_team_members') || '[]')
+        };
+        saveServerStorage(localData);
+      }
+    }
+    initServerStorage();
+  }, []);
 
   const activeInstance = useMemo(() => instances.find(i => i.id === activeInstanceId), [instances, activeInstanceId]);
 
@@ -94,18 +149,21 @@ function App() {
     if (newInstances.length > 0 && !newInstances.find(i => i.id === activeInstanceId)) {
       setActiveInstanceId(newInstances[0].id);
     }
+    debouncedSaveServerStorage({ gitInstances: newInstances });
   };
 
   const handleSaveJiraConfig = (config) => {
     setJiraConfig(config);
     localStorage.setItem('jira-dashboard-config', JSON.stringify(config));
     setIsSettingsOpen(false);
+    debouncedSaveServerStorage({ jiraConfig: config });
   };
 
   const handleSaveDbConfig = (config) => {
     setDbConfig(config);
     localStorage.setItem('db-dashboard-config', JSON.stringify(config));
     setIsSettingsOpen(false);
+    debouncedSaveServerStorage({ dbConfig: config });
   };
 
   const handleImportAll = (imported) => {
@@ -133,9 +191,14 @@ function App() {
     if (imported.plannedReleases) {
       localStorage.setItem('planned_releases_data', JSON.stringify(imported.plannedReleases));
     }
+    if (imported.jiraTeams) {
+      localStorage.setItem('jira_teams_data', JSON.stringify(imported.jiraTeams));
+    }
     if (imported.teamMembers) {
       localStorage.setItem('jira_team_members', JSON.stringify(imported.teamMembers));
     }
+    // Save imported data directly to disk storage
+    saveServerStorage(imported);
   };
 
   const normalizeForSearch = (str) => str ? str.toLowerCase().replace(/\s+/g, '') : '';

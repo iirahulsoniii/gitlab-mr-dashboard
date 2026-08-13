@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { fetchJiraData, logJiraHours, fetchJiraIssue, fetchAssignedIssues } from '../jiraApi';
+import { debouncedSaveServerStorage } from '../storageApi';
 import { RefreshCcw, Loader2, Search, CalendarOff, CalendarHeart } from 'lucide-react';
 import '../jira.css';
 
@@ -17,6 +18,7 @@ export default function JiraWorklogDashboard({ config }) {
 
   useEffect(() => {
     localStorage.setItem('jira_holidays', JSON.stringify(holidays));
+    debouncedSaveServerStorage({ jiraHolidays: holidays });
   }, [holidays]);
 
   const toggleHoliday = (dateStr) => {
