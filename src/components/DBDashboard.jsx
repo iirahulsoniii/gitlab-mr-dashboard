@@ -852,13 +852,13 @@ FETCH FIRST 10 ROWS ONLY`;
             </div>
           </div>
           
-          <div style={{ overflowX: 'auto' }}>
+          <div className="db-results-scroll-container">
             {filteredData.length > 0 ? (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+              <table className="db-results-table">
                 <thead>
-                  <tr style={{ borderBottom: '2px solid var(--border-color)' }}>
+                  <tr>
                     {result.columns.map(col => (
-                      <th key={col} style={{ textAlign: 'left', padding: '0.75rem 1rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                      <th key={col}>
                         {col}
                       </th>
                     ))}
@@ -866,9 +866,9 @@ FETCH FIRST 10 ROWS ONLY`;
                 </thead>
                 <tbody>
                   {filteredData.map((row, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid var(--border-color)', transition: 'background-color 0.2s' }}>
+                    <tr key={i}>
                       {result.columns.map(col => (
-                        <td key={col} style={{ padding: '0.75rem 1rem' }}>
+                        <td key={col}>
                           {renderCellContent(row[col])}
                         </td>
                       ))}
