@@ -90,7 +90,7 @@ export default function MultiSelectDropdown({
   }, [isAllSelected, isNoneSelected, currentSelectedList, allLabel, title, options]);
 
   return (
-    <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block', width }}>
+    <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block', width, zIndex: isOpen ? 1000 : 'auto' }}>
       <button
         type="button"
         className="btn"
@@ -115,24 +115,22 @@ export default function MultiSelectDropdown({
 
       {isOpen && (
         <div
-          className="glass"
           style={{
             position: 'absolute',
-            top: 'calc(100% + 4px)',
+            top: 'calc(100% + 6px)',
             left: 0,
             minWidth: '240px',
             maxWidth: '320px',
-            maxHeight: '340px',
-            zIndex: 150,
-            boxShadow: '0 12px 30px rgba(0,0,0,0.6)',
+            maxHeight: '360px',
+            zIndex: 99999,
+            boxShadow: '0 20px 45px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.15)',
             borderRadius: '8px',
-            padding: '0.6rem',
+            padding: '0.65rem',
             display: 'flex',
             flexDirection: 'column',
-            gap: '0.4rem',
-            backdropFilter: 'blur(20px)',
-            background: 'linear-gradient(145deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.98))',
-            border: '1px solid rgba(255, 255, 255, 0.12)'
+            gap: '0.45rem',
+            background: '#1e293b',
+            border: '1px solid rgba(255, 255, 255, 0.18)'
           }}
         >
           {/* Search box */}

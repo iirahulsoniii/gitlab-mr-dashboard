@@ -712,7 +712,7 @@ export default function JiraAnalyticsDashboard({ config }) {
       </div>
 
       {/* Multi-Select Filters Bar */}
-      <div className="glass flex justify-between items-center" style={{ padding: '0.85rem 1.25rem', flexWrap: 'wrap', gap: '0.75rem', background: 'rgba(15, 23, 42, 0.6)' }}>
+      <div className="glass flex justify-between items-center" style={{ padding: '0.85rem 1.25rem', flexWrap: 'wrap', gap: '0.75rem', background: 'rgba(15, 23, 42, 0.75)', position: 'relative', zIndex: 100, overflow: 'visible' }}>
         <div className="flex items-center gap-2 flex-wrap">
           <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', fontWeight: 600, marginRight: '4px' }}>
             <Filter size={13} style={{ display: 'inline', marginRight: '4px', verticalAlign: '-1px' }} />
