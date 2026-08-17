@@ -127,6 +127,8 @@ export default function DBDashboard({ dbConfig = {} }) {
   const [isTableDropdownOpen, setIsTableDropdownOpen] = useState(false);
   const [selectedTable, setSelectedTable] = useState('');
   const [loading, setLoading] = useState(false);
+  const [attemptCount, setAttemptCount] = useState(1);
+  const [isRetrying, setIsRetrying] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
@@ -314,54 +316,94 @@ FETCH FIRST 10 ROWS ONLY`;
     setSuccessMsg(null);
     setResult(null);
     setSearch('');
+    setAttemptCount(1);
+    setIsRetrying(false);
 
-    const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s safety timeout
+    let attempt = 0;
 
-    try {
-      const res = await fetch('/db-api/api/query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          environment: activeConn.environment || 'stage', 
-          query, 
-          connection: activeConn,
-          db_config: dbConfig 
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      
-      const data = await res.json().catch(() => ({}));
-      
-      if (!res.ok) {
-        const errorDetail = data.detail || `Server returned error (${res.status} ${res.statusText}).`;
-        setError(errorDetail);
-        setLoading(false);
-        return;
-      }
+    while (true) {
+      attempt++;
+      setAttemptCount(attempt);
 
-      if (data.data) {
-        setResult({ columns: data.columns || [], data: data.data || [] });
-      } else {
-        setSuccessMsg(data.message || 'Query executed successfully with 0 rows returned.');
-      }
-      setError(null);
-    } catch (err) {
-      clearTimeout(timeoutId);
-      if (err.name === 'AbortError') {
-        setError('Query execution timed out after 20 seconds or was cancelled. Please check DB host, DSN, or VPN.');
-      } else {
-        const msg = err.message || 'Failed to execute query.';
-        if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-          setError('Cannot reach database backend. Make sure FastAPI is running on port 8000.');
+      try {
+        const res = await fetch('/db-api/api/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            environment: activeConn.environment || 'stage', 
+            query, 
+            connection: activeConn,
+            db_config: dbConfig 
+          }),
+          signal: controller.signal
+        });
+        
+        const data = await res.json().catch(() => ({}));
+        
+        if (!res.ok) {
+          const errorDetail = data.detail || `Server returned error (${res.status} ${res.statusText}).`;
+          throw new Error(errorDetail);
+        }
+
+        if (data.data) {
+          setResult({ columns: data.columns || [], data: data.data || [] });
         } else {
-          setError(msg);
+          setSuccessMsg(data.message || 'Query executed successfully with 0 rows returned.');
+        }
+        setError(null);
+        setIsRetrying(false);
+        break; // Successfully connected and executed!
+      } catch (err) {
+        if (err.name === 'AbortError' || controller.signal.aborted) {
+          setError('Query execution cancelled by user.');
+          setIsRetrying(false);
+          break;
+        }
+
+        const msg = err.message || 'Failed to execute query.';
+        const isListenerRefused = 
+          msg.includes('DPY-6005') || 
+          msg.includes('DPY-6000') || 
+          msg.includes('Listener refused') || 
+          msg.includes('12516') || 
+          msg.includes('12520') ||
+          msg.includes('could not find available handler');
+
+        if (isListenerRefused) {
+          setIsRetrying(true);
+          setError(`Oracle Listener Busy (ORA-12516 / DPY-6005): Listener refused connection. Retrying automatically in 2 seconds... (Attempt #${attempt})`);
+          
+          // Wait 2 seconds before retrying, respecting cancel/abort
+          await new Promise((resolve) => {
+            const timer = setTimeout(resolve, 2000);
+            if (controller.signal) {
+              controller.signal.addEventListener('abort', () => {
+                clearTimeout(timer);
+                resolve();
+              }, { once: true });
+            }
+          });
+
+          if (controller.signal.aborted) {
+            setError('Query execution cancelled by user.');
+            setIsRetrying(false);
+            break;
+          }
+          // Continue while loop to retry!
+        } else {
+          // Non-transient error (e.g. invalid credentials, syntax error, table not found)
+          setIsRetrying(false);
+          if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+            setError('Cannot reach database backend. Make sure FastAPI is running on port 8000.');
+          } else {
+            setError(msg);
+          }
+          break; // Do not loop for other errors!
         }
       }
-    } finally {
-      clearTimeout(timeoutId);
-      setLoading(false);
     }
+
+    setLoading(false);
   };
 
   const renderCellContent = (val) => {
@@ -806,15 +848,46 @@ FETCH FIRST 10 ROWS ONLY`;
               disabled={loading || !query.trim()}
               style={{ padding: '0.35rem 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}
             >
-              {loading ? <Loader2 size={15} className="spinner" /> : <Play size={15} />}
-              {loading ? 'Executing...' : 'Run Query'}
+              {loading ? (
+                <>
+                  <Loader2 size={15} className="spinner" />
+                  {isRetrying ? `Retrying (Attempt #${attemptCount})...` : (attemptCount > 1 ? `Attempt #${attemptCount}...` : 'Executing...')}
+                </>
+              ) : (
+                <>
+                  <Play size={15} />
+                  Run Query
+                </>
+              )}
             </button>
           </div>
         </div>
       </div>
 
       {/* Error and Success Banners */}
-      {error && (
+      {error && isRetrying && (
+        <div className="glass flex items-center gap-3" style={{ padding: '1rem 1.25rem', borderColor: '#f59e0b', color: '#f59e0b', background: 'rgba(245, 158, 11, 0.1)', borderRadius: '8px', wordBreak: 'break-word' }}>
+          <Loader2 size={22} className="spinner" style={{ flexShrink: 0, color: '#f59e0b' }} />
+          <div className="flex-col" style={{ flexGrow: 1 }}>
+            <span style={{ fontWeight: 600, fontSize: '0.9rem', color: '#fbbf24' }}>
+              Oracle Listener Busy (Attempt #{attemptCount})
+            </span>
+            <span style={{ fontSize: '0.85rem', marginTop: '2px', color: 'var(--text-primary)' }}>{error}</span>
+          </div>
+          <button 
+            type="button"
+            className="btn" 
+            onClick={() => {
+              if (abortControllerRef.current) abortControllerRef.current.abort();
+            }}
+            style={{ borderColor: '#f59e0b', color: '#fbbf24', background: 'transparent', padding: '0.25rem 0.6rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+          >
+            <XCircle size={14} /> Cancel Retries
+          </button>
+        </div>
+      )}
+
+      {error && !isRetrying && (
         <div className="glass flex items-center gap-3" style={{ padding: '1rem 1.25rem', borderColor: 'var(--danger-color)', color: 'var(--danger-color)', background: 'rgba(239, 68, 68, 0.08)', borderRadius: '8px', wordBreak: 'break-word' }}>
           <AlertCircle size={22} style={{ flexShrink: 0 }} />
           <div className="flex-col" style={{ flexGrow: 1 }}>
