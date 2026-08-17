@@ -626,3 +626,86 @@ export async function fetchIssuesForAssignees(config, { accountIds = [], isCurre
 
   return allIssues;
 }
+
+export async function fetchJiraAnalyticsIssues(config, { days = 30, projectKey = '' } = {}) {
+  if (!config.email || !config.token) {
+    throw new Error('Jira Email and Token are required.');
+  }
+
+  const authString = btoa(`${config.email}:${config.token}`);
+  const headers = {
+    'Authorization': `Basic ${authString}`,
+    'Accept': 'application/json',
+    'Content-Type': 'application/json'
+  };
+
+  let jql = days > 0 
+    ? `(created >= -${days}d OR resolutiondate >= -${days}d OR updated >= -${days}d)` 
+    : 'created is not null';
+    
+  if (projectKey && projectKey.trim()) {
+    jql = `project = "${projectKey.trim()}" AND ${jql}`;
+  }
+  jql += ' ORDER BY created DESC';
+
+  const fields = [
+    "summary", 
+    "status", 
+    "issuetype", 
+    "priority", 
+    "created", 
+    "resolutiondate", 
+    "updated", 
+    "components", 
+    "labels", 
+    "assignee", 
+    "reporter", 
+    "fixVersions"
+  ];
+
+  let allIssues = [];
+  let nextPageToken = null;
+  let isLast = false;
+  let maxPages = 20; // Up to 2,000 issues max
+
+  while (!isLast && maxPages > 0) {
+    maxPages--;
+    const payload = {
+      jql,
+      fields,
+      maxResults: 100
+    };
+    if (nextPageToken) {
+      payload.nextPageToken = nextPageToken;
+    }
+
+    const response = await fetch('/jira-api/rest/api/3/search/jql', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      const errTxt = await response.text().catch(() => '');
+      throw new Error(`Jira API Error: ${response.status} ${response.statusText} - ${errTxt}`);
+    }
+
+    const data = await response.json();
+    allIssues = allIssues.concat(data.issues || []);
+
+    if (data.isLast !== undefined) {
+      isLast = data.isLast;
+    } else {
+      isLast = true;
+    }
+
+    if (!isLast && data.nextPageToken) {
+      nextPageToken = data.nextPageToken;
+    } else {
+      isLast = true;
+    }
+  }
+
+  return allIssues;
+}
+

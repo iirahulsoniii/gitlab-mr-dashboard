@@ -7,7 +7,8 @@ import JiraWorklogDashboard from './components/JiraWorklogDashboard';
 import DBDashboard from './components/DBDashboard';
 import JiraIssuesDashboard from './components/JiraIssuesDashboard';
 import PlannedReleaseDashboard from './components/PlannedReleaseDashboard';
-import { Settings, Database, ListFilter, FileText, CalendarClock, Code2, CheckSquare, Rocket } from 'lucide-react';
+import JiraAnalyticsDashboard from './components/JiraAnalyticsDashboard';
+import { Settings, Database, ListFilter, FileText, CalendarClock, Code2, CheckSquare, Rocket, TrendingUp } from 'lucide-react';
 import { fetchMergeRequests } from './api';
 import { fetchServerStorage, saveServerStorage, debouncedSaveServerStorage } from './storageApi';
 
@@ -352,6 +353,13 @@ function App() {
           </button>
           <button 
             className="btn" 
+            style={{ border: 'none', background: activeView === 'jira-analytics' ? 'var(--surface-color-light)' : 'transparent', color: activeView === 'jira-analytics' ? 'var(--accent-color)' : 'var(--text-secondary)' }}
+            onClick={() => setActiveView('jira-analytics')}
+          >
+            <TrendingUp size={18} /> Jira Analytics
+          </button>
+          <button 
+            className="btn" 
             style={{ border: 'none', background: activeView === 'db' ? 'var(--surface-color-light)' : 'transparent', color: activeView === 'db' ? 'var(--accent-color)' : 'var(--text-secondary)' }}
             onClick={() => setActiveView('db')}
           >
@@ -363,7 +371,7 @@ function App() {
       <header className="flex justify-between items-center" style={{ marginBottom: '2rem' }}>
         <div className="flex-col gap-2">
           <h1 style={{ margin: 0, background: 'linear-gradient(45deg, var(--accent-color), #8b5cf6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            {activeView === 'mr' ? 'Merge Request Dashboard' : activeView === 'jira' ? 'Jira Worklog Dashboard' : activeView === 'jira-issues' ? 'Jira Assigned Issues' : activeView === 'planned-release' ? 'Planned Releases' : 'Database Dashboard'}
+            {activeView === 'mr' ? 'Merge Request Dashboard' : activeView === 'jira' ? 'Jira Worklog Dashboard' : activeView === 'jira-issues' ? 'Jira Assigned Issues' : activeView === 'planned-release' ? 'Planned Releases' : activeView === 'jira-analytics' ? 'Jira Flow & Trend Analytics' : 'Database Dashboard'}
           </h1>
           
           {activeView === 'mr' && instances.length > 0 && (
@@ -388,39 +396,54 @@ function App() {
       </header>
 
       {error && (
-        <div className="glass" style={{ padding: '1rem', marginBottom: '2rem', background: 'rgba(239, 68, 68, 0.1)', borderColor: 'var(--danger-color)', color: 'var(--text-primary)' }}>
-          <strong>Error:</strong> {error}
+        <div className="card flex items-center gap-4" style={{ borderColor: 'var(--danger-color)', color: 'var(--danger-color)', marginBottom: '2rem' }}>
+          <Settings size={24} />
+          <div>{error}</div>
         </div>
       )}
 
       {/* MR Dashboard View */}
       <div style={{ display: activeView === 'mr' ? 'block' : 'none' }}>
-        {!isSettingsOpen && activeInstance && (
+        <FilterPanel 
+          filters={filters} 
+          onFilterChange={handleFilterChange} 
+          services={services}
+          authors={authors}
+          mergedByUsers={mergedByUsers}
+          branches={branches}
+          timeframe={timeframe}
+          onTimeframeChange={handleTimeframeChange}
+          onRefresh={handleRefresh}
+          loading={loading}
+          mrCount={filteredMRs.length}
+          ticketCount={jiraTickets.length}
+        />
+
+        <div className="flex" style={{ borderBottom: '1px solid var(--border-color)', marginBottom: '1.5rem' }}>
+          <div 
+            style={tabStyle(activeTab === 'mrs')} 
+            onClick={() => setActiveTab('mrs')}
+          >
+            <FileText size={18} />
+            Merge Requests ({filteredMRs.length})
+          </div>
+          <div 
+            style={tabStyle(activeTab === 'jira')} 
+            onClick={() => setActiveTab('jira')}
+          >
+            <ListFilter size={18} />
+            Jira Tickets ({jiraTickets.length})
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="flex justify-center" style={{ padding: '4rem' }}>
+            <div className="tag">Loading data...</div>
+          </div>
+        ) : (
           <>
-            <FilterPanel 
-              filters={filters} 
-              setFilters={setFilters} 
-              services={availableServices} 
-              timeframe={timeframe}
-              setTimeframe={setTimeframe}
-              onSearch={handleSearch}
-              onReset={handleReset}
-            />
-
-            <div className="flex gap-4" style={{ marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)' }}>
-              <div style={tabStyle(activeTab === 'mrs')} onClick={() => setActiveTab('mrs')}>
-                <ListFilter size={18} /> Merge Requests ({filteredMRs.length})
-              </div>
-              <div style={tabStyle(activeTab === 'jira')} onClick={() => setActiveTab('jira')}>
-                <FileText size={18} /> Jira Tickets ({jiraTickets.length})
-              </div>
-            </div>
-
-            {activeTab === 'mrs' ? (
-              <MRList mrs={filteredMRs} loading={loading} />
-            ) : (
-              <JiraList tickets={jiraTickets} />
-            )}
+            {activeTab === 'mrs' && <MRList mrs={filteredMRs} />}
+            {activeTab === 'jira' && <JiraList tickets={jiraTickets} />}
           </>
         )}
       </div>
@@ -438,6 +461,11 @@ function App() {
       {/* Planned Release Dashboard View */}
       <div style={{ display: activeView === 'planned-release' ? 'block' : 'none' }}>
         <PlannedReleaseDashboard config={jiraConfig} />
+      </div>
+
+      {/* Jira Analytics Dashboard View */}
+      <div style={{ display: activeView === 'jira-analytics' ? 'block' : 'none' }}>
+        <JiraAnalyticsDashboard config={jiraConfig} />
       </div>
 
       {/* Database Dashboard View */}
