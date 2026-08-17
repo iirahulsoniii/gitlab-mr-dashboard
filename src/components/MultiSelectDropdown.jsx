@@ -133,10 +133,10 @@ export default function MultiSelectDropdown({
             border: '1px solid rgba(255, 255, 255, 0.18)'
           }}
         >
-          {/* Search box */}
-          {showSearch && options.length > 5 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'rgba(0,0,0,0.3)', padding: '0.3rem 0.5rem', borderRadius: '5px', border: '1px solid rgba(255,255,255,0.08)' }}>
-              <Search size={13} style={{ color: 'var(--text-secondary)' }} />
+          {/* Search box - Always visible */}
+          {showSearch && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'rgba(0,0,0,0.35)', padding: '0.35rem 0.55rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.12)' }}>
+              <Search size={13} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
               <input
                 type="text"
                 placeholder={searchPlaceholder}
@@ -147,6 +147,7 @@ export default function MultiSelectDropdown({
               />
               {searchQuery && (
                 <button
+                  type="button"
                   onClick={() => setSearchQuery('')}
                   style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.75rem', padding: '0 2px' }}
                 >
