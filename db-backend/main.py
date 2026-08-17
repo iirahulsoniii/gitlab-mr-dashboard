@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -56,6 +57,25 @@ class TablesRequest(BaseModel):
     db_config: Optional[dict] = None
     connection: Optional[dict] = None
 
+def is_listener_busy_error(err_str: str) -> bool:
+    s = str(err_str).lower()
+    return any(k in s for k in ("dpy-6005", "dpy-6000", "listener refused", "12516", "12520", "available handler", "cannot connect to database"))
+
+def connect_with_retry(user, password, dsn, conn_name: str, max_retries: int = 3):
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            return oracledb.connect(user=user, password=password, dsn=dsn, tcp_connect_timeout=8)
+        except Exception as e:
+            last_err = e
+            err_msg = str(e)
+            if is_listener_busy_error(err_msg) and attempt < max_retries:
+                print(f"[{conn_name}] Oracle Listener busy on backend attempt {attempt}/{max_retries}. Retrying in 1.5s...")
+                time.sleep(1.5)
+                continue
+            break
+    raise HTTPException(status_code=500, detail=f"Database connection failed for '{conn_name}': {str(last_err)}")
+
 def get_db_connection(environment: str, config: Optional[dict] = None, connection: Optional[dict] = None):
     # 1. If explicit connection object is provided (Multi-DB connection support)
     if connection and connection.get('user'):
@@ -79,11 +99,8 @@ def get_db_connection(environment: str, config: Optional[dict] = None, connectio
             conn_name = connection.get('name') or f"{str(env).upper()} Connection"
             raise HTTPException(status_code=400, detail=f"Incomplete connection details for '{conn_name}'. Please verify user, password, and DSN in Settings.")
             
-        try:
-            return oracledb.connect(user=user, password=password, dsn=dsn, tcp_connect_timeout=8)
-        except Exception as e:
-            conn_name = connection.get('name') or f"{str(env).upper()} Connection"
-            raise HTTPException(status_code=500, detail=f"Database connection failed for '{conn_name}': {str(e)}")
+        conn_name = connection.get('name') or f"{str(env).upper()} Connection"
+        return connect_with_retry(user=user, password=password, dsn=dsn, conn_name=conn_name)
 
     prefix = "STAGE_DB_" if (environment or "").lower() == "stage" else "PROD_DB_"
     
@@ -108,10 +125,7 @@ def get_db_connection(environment: str, config: Optional[dict] = None, connectio
         if not all([user, password, dsn]):
             raise HTTPException(status_code=400, detail=f"Incomplete UI DB configuration for {environment}. Please provide a DSN or ensure Host/Port/Service are in .env.")
             
-        try:
-            return oracledb.connect(user=user, password=password, dsn=dsn, tcp_connect_timeout=8)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Database connection failed (via UI config): {str(e)}")
+        return connect_with_retry(user=user, password=password, dsn=dsn, conn_name=f"{environment.upper()} Connection")
 
     # 3. Fallback to .env logic if UI config not provided
     user = os.getenv(f"{prefix}USER")
@@ -123,12 +137,8 @@ def get_db_connection(environment: str, config: Optional[dict] = None, connectio
     if not all([user, password, host, port, service]):
         raise HTTPException(status_code=500, detail=f"Database configuration for {environment} is incomplete (no UI config, and missing .env).")
         
-    try:
-        dsn = oracledb.makedsn(host.strip(), int(port), service_name=service.strip())
-        conn = oracledb.connect(user=user.strip(), password=password, dsn=dsn, tcp_connect_timeout=8)
-        return conn
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
+    dsn = oracledb.makedsn(host.strip(), int(port), service_name=service.strip())
+    return connect_with_retry(user=user.strip(), password=password, dsn=dsn, conn_name=f"{environment.upper()} Connection (.env)")
 
 @app.post("/api/tables")
 async def get_tables(req: TablesRequest):
@@ -149,6 +159,8 @@ async def get_tables(req: TablesRequest):
             cur.execute("SELECT table_name FROM all_tables WHERE owner = USER ORDER BY table_name")
             tables = [row[0] for row in cur.fetchall()]
         return {"tables": tables, "status": "success", "count": len(tables)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to fetch tables: {str(e)}")
     finally:
@@ -205,6 +217,8 @@ async def execute_query(req: QueryRequest):
         else:
             return {"columns": [], "data": [], "status": "success", "message": "Query executed with 0 rows returned."}
             
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Query execution failed: {str(e)}")
     finally:

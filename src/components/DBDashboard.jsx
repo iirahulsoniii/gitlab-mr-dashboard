@@ -360,14 +360,16 @@ FETCH FIRST 10 ROWS ONLY`;
           break;
         }
 
-        const msg = err.message || 'Failed to execute query.';
+        const msg = String(err?.message || err || 'Failed to execute query.');
+        const lowerMsg = msg.toLowerCase();
         const isListenerRefused = 
-          msg.includes('DPY-6005') || 
-          msg.includes('DPY-6000') || 
-          msg.includes('Listener refused') || 
-          msg.includes('12516') || 
-          msg.includes('12520') ||
-          msg.includes('could not find available handler');
+          lowerMsg.includes('dpy-6005') || 
+          lowerMsg.includes('dpy-6000') || 
+          lowerMsg.includes('listener refused') || 
+          lowerMsg.includes('12516') || 
+          lowerMsg.includes('12520') ||
+          lowerMsg.includes('available handler') ||
+          lowerMsg.includes('cannot connect to database');
 
         if (isListenerRefused) {
           setIsRetrying(true);
