@@ -161,25 +161,35 @@ export default function JiraAnalyticsDashboard({ config }) {
     return list;
   }, [issues]);
 
+  // Worker Filter Mode: 'workedBy' (anyone who contributed/logged work) vs 'assigneeOnly'
+  const [workerFilterMode, setWorkerFilterMode] = useState('workedBy');
+
   const availableAssignees = useMemo(() => {
     const userMap = new Map();
     let unassignedCount = 0;
 
     issues.forEach(i => {
-      const a = i.fields?.assignee;
-      if (!a || !a.accountId) {
+      const people = workerFilterMode === 'workedBy' 
+        ? (i.contributors && i.contributors.length > 0 ? i.contributors : (i.fields?.assignee ? [i.fields.assignee] : []))
+        : (i.fields?.assignee ? [i.fields.assignee] : []);
+
+      if (people.length === 0) {
         unassignedCount++;
       } else {
-        const id = a.accountId;
-        if (!userMap.has(id)) {
-          userMap.set(id, {
-            id,
-            label: a.displayName || a.emailAddress || 'Unnamed',
-            avatarUrl: a.avatarUrls?.['24x24'] || a.avatarUrls?.['48x48'],
-            count: 0
-          });
-        }
-        userMap.get(id).count += 1;
+        people.forEach(p => {
+          const id = p.accountId;
+          if (id) {
+            if (!userMap.has(id)) {
+              userMap.set(id, {
+                id,
+                label: p.displayName || p.emailAddress || 'Unnamed',
+                avatarUrl: p.avatarUrl || p.avatarUrls?.['24x24'] || p.avatarUrls?.['48x48'],
+                count: 0
+              });
+            }
+            userMap.get(id).count += 1;
+          }
+        });
       }
     });
 
@@ -188,7 +198,7 @@ export default function JiraAnalyticsDashboard({ config }) {
       list.push({ id: '__unassigned__', label: 'Unassigned', count: unassignedCount });
     }
     return list;
-  }, [issues]);
+  }, [issues, workerFilterMode]);
 
   const availableIssueTypes = useMemo(() => {
     const typeMap = new Map();
@@ -241,13 +251,23 @@ export default function JiraAnalyticsDashboard({ config }) {
         }
       }
 
-      // 3. Assignee Filter
+      // 3. Assignee / Worked By Filter
       if (selectedAssignees !== null) {
-        const accId = issue.fields?.assignee?.accountId;
-        if (!accId) {
-          if (!selectedAssignees.includes('__unassigned__')) return false;
+        if (workerFilterMode === 'workedBy') {
+          const contributors = issue.contributors || [];
+          if (contributors.length === 0) {
+            if (!selectedAssignees.includes('__unassigned__')) return false;
+          } else {
+            const hasMatch = contributors.some(c => selectedAssignees.includes(c.accountId));
+            if (!hasMatch) return false;
+          }
         } else {
-          if (!selectedAssignees.includes(accId)) return false;
+          const accId = issue.fields?.assignee?.accountId;
+          if (!accId) {
+            if (!selectedAssignees.includes('__unassigned__')) return false;
+          } else {
+            if (!selectedAssignees.includes(accId)) return false;
+          }
         }
       }
 
@@ -741,28 +761,52 @@ export default function JiraAnalyticsDashboard({ config }) {
             searchPlaceholder="Search labels..."
           />
 
-          {/* 3. Assignees Multi-Select */}
-          <MultiSelectDropdown
-            title="Assignees"
-            allLabel="All Assignees"
-            options={availableAssignees}
-            selected={selectedAssignees}
-            onChange={setSelectedAssignees}
-            icon={User}
-            searchPlaceholder="Search assignees..."
-            renderOption={(opt, isChecked) => (
-              <div className="flex items-center gap-2" style={{ flexGrow: 1, minWidth: 0 }}>
-                {opt.avatarUrl ? (
-                  <img src={opt.avatarUrl} alt="" style={{ width: '18px', height: '18px', borderRadius: '50%' }} />
-                ) : (
-                  <User size={14} style={{ color: 'var(--accent-color)' }} />
-                )}
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {opt.label}
-                </span>
-              </div>
-            )}
-          />
+          {/* 3. Assignees / Worked By Multi-Select with Mode Toggle */}
+          <div className="flex items-center gap-1">
+            <MultiSelectDropdown
+              title={workerFilterMode === 'workedBy' ? "Worked By" : "Assignees"}
+              allLabel={workerFilterMode === 'workedBy' ? "All Contributors" : "All Assignees"}
+              options={availableAssignees}
+              selected={selectedAssignees}
+              onChange={setSelectedAssignees}
+              icon={User}
+              searchPlaceholder="Search people..."
+              renderOption={(opt, isChecked) => (
+                <div className="flex items-center gap-2" style={{ flexGrow: 1, minWidth: 0 }}>
+                  {opt.avatarUrl ? (
+                    <img src={opt.avatarUrl} alt="" style={{ width: '18px', height: '18px', borderRadius: '50%' }} />
+                  ) : (
+                    <User size={14} style={{ color: 'var(--accent-color)' }} />
+                  )}
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {opt.label}
+                  </span>
+                </div>
+              )}
+            />
+
+            {/* Mode switch between 'Anyone who worked on issue' and 'Assignee only' */}
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                const nextMode = workerFilterMode === 'workedBy' ? 'assigneeOnly' : 'workedBy';
+                setWorkerFilterMode(nextMode);
+                setSelectedAssignees(null);
+              }}
+              title={`Switch worker filter mode (currently: ${workerFilterMode === 'workedBy' ? 'Anyone who logged work/commented/assigned' : 'Assignee only'})`}
+              style={{
+                fontSize: '0.72rem',
+                padding: '0.35rem 0.5rem',
+                background: workerFilterMode === 'workedBy' ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                color: workerFilterMode === 'workedBy' ? '#60a5fa' : 'var(--text-secondary)',
+                borderColor: workerFilterMode === 'workedBy' ? 'var(--accent-color)' : 'var(--border-color)',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {workerFilterMode === 'workedBy' ? '👥 Anyone Worked' : '👤 Assignee Only'}
+            </button>
+          </div>
 
           {/* 4. Issue Types Multi-Select */}
           <MultiSelectDropdown
@@ -1362,7 +1406,8 @@ export default function JiraAnalyticsDashboard({ config }) {
                   <th style={{ width: '110px' }}>Key</th>
                   <th style={{ width: '90px' }}>Type</th>
                   <th>Summary</th>
-                  <th style={{ width: '150px' }}>Assignee</th>
+                  <th style={{ width: '140px' }}>Assignee</th>
+                  <th style={{ minWidth: '160px' }}>Worked By (Contributors)</th>
                   <th style={{ width: '130px' }}>Component</th>
                   <th style={{ width: '120px' }}>Status</th>
                   <th style={{ width: '90px' }}>Priority</th>
@@ -1379,6 +1424,7 @@ export default function JiraAnalyticsDashboard({ config }) {
                   const assigneeAvatar = issue.fields?.assignee?.avatarUrls?.['24x24'];
                   const components = issue.fields?.components || [];
                   const priorityName = issue.fields?.priority?.name;
+                  const contributors = issue.contributors || [];
 
                   return (
                     <tr key={issue.key}>
@@ -1404,7 +1450,7 @@ export default function JiraAnalyticsDashboard({ config }) {
 
                       {/* Summary */}
                       <td>
-                        <div style={{ maxWidth: '380px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }} title={issue.fields?.summary}>
+                        <div style={{ maxWidth: '340px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }} title={issue.fields?.summary}>
                           {issue.fields?.summary}
                         </div>
                       </td>
@@ -1417,10 +1463,54 @@ export default function JiraAnalyticsDashboard({ config }) {
                           ) : (
                             <User size={13} style={{ color: 'var(--accent-color)' }} />
                           )}
-                          <span style={{ fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>
+                          <span style={{ fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '110px' }}>
                             {assigneeName}
                           </span>
                         </div>
+                      </td>
+
+                      {/* Worked By (Contributors) */}
+                      <td>
+                        {contributors.length > 0 ? (
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {contributors.map(c => {
+                              const rolesStr = (c.roles || []).join(', ');
+                              const hoursStr = c.hoursLogged > 0 ? ` • ${c.hoursLogged.toFixed(1)}h logged` : '';
+                              const tooltip = `${c.displayName} (${rolesStr}${hoursStr})`;
+
+                              return (
+                                <div
+                                  key={c.accountId}
+                                  className="flex items-center gap-1"
+                                  style={{
+                                    background: 'rgba(255,255,255,0.06)',
+                                    borderRadius: '12px',
+                                    padding: '2px 6px',
+                                    fontSize: '0.72rem',
+                                    border: '1px solid rgba(255,255,255,0.08)'
+                                  }}
+                                  title={tooltip}
+                                >
+                                  {c.avatarUrl ? (
+                                    <img src={c.avatarUrl} alt="" style={{ width: '14px', height: '14px', borderRadius: '50%' }} />
+                                  ) : (
+                                    <User size={10} style={{ color: 'var(--accent-color)' }} />
+                                  )}
+                                  <span style={{ maxWidth: '80px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {c.displayName.split(' ')[0]}
+                                  </span>
+                                  {c.hoursLogged > 0 && (
+                                    <span style={{ color: '#34d399', fontWeight: 600, fontSize: '0.68rem' }}>
+                                      {c.hoursLogged.toFixed(1)}h
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>-</span>
+                        )}
                       </td>
 
                       {/* Components */}

@@ -664,7 +664,9 @@ export async function fetchJiraAnalyticsIssues(config, { days = 30, projectKey =
     "assignee", 
     "reporter", 
     "fixVersions",
-    "project"
+    "project",
+    "worklog",
+    "comment"
   ];
 
   let allIssues = [];
@@ -678,6 +680,7 @@ export async function fetchJiraAnalyticsIssues(config, { days = 30, projectKey =
     const payload = {
       jql,
       fields,
+      expand: "changelog",
       maxResults: 100
     };
     if (nextPageToken) {
@@ -732,6 +735,69 @@ export async function fetchJiraAnalyticsIssues(config, { days = 30, projectKey =
     }
   }
 
-  return allIssues;
+  // Enrich each issue with full list of contributors (Assignee, Logged Work, Comments, Status Changes)
+  return allIssues.map(issue => {
+    const contributorsMap = new Map();
+
+    const addOrUpdate = (author, role, hours = 0) => {
+      if (!author || !author.accountId) return;
+      const id = author.accountId;
+      if (!contributorsMap.has(id)) {
+        contributorsMap.set(id, {
+          accountId: id,
+          displayName: author.displayName || author.emailAddress || 'User',
+          emailAddress: author.emailAddress || '',
+          avatarUrl: author.avatarUrls?.['24x24'] || author.avatarUrls?.['48x48'] || '',
+          roles: new Set(),
+          hoursLogged: 0,
+          commentCount: 0
+        });
+      }
+      const c = contributorsMap.get(id);
+      if (role) c.roles.add(role);
+      if (hours) c.hoursLogged += hours;
+    };
+
+    // 1. Assignee
+    if (issue.fields?.assignee) {
+      addOrUpdate(issue.fields.assignee, 'Assignee');
+    }
+
+    // 2. Worklog authors (who logged hours)
+    const worklogs = issue.fields?.worklog?.worklogs || [];
+    worklogs.forEach(wl => {
+      const hours = (wl.timeSpentSeconds || 0) / 3600;
+      addOrUpdate(wl.author, 'Logged Time', hours);
+    });
+
+    // 3. Comment authors
+    const comments = issue.fields?.comment?.comments || [];
+    comments.forEach(cm => {
+      if (cm.author?.accountId) {
+        addOrUpdate(cm.author, 'Commented');
+        if (contributorsMap.has(cm.author.accountId)) {
+          contributorsMap.get(cm.author.accountId).commentCount += 1;
+        }
+      }
+    });
+
+    // 4. Changelog histories (Status change & field updates)
+    const histories = issue.changelog?.histories || [];
+    histories.forEach(h => {
+      if (h.author?.accountId) {
+        addOrUpdate(h.author, 'Updated Ticket');
+      }
+    });
+
+    const contributors = Array.from(contributorsMap.values()).map(c => ({
+      ...c,
+      roles: Array.from(c.roles)
+    }));
+
+    return {
+      ...issue,
+      contributors
+    };
+  });
 }
 
