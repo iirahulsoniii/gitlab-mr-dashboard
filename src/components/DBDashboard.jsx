@@ -1,5 +1,18 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Play, Database, Server, AlertCircle, CheckCircle2, Search, Loader2, XCircle, RefreshCcw } from 'lucide-react';
+import { 
+  Play, 
+  Database, 
+  Server, 
+  AlertCircle, 
+  CheckCircle2, 
+  Search, 
+  Loader2, 
+  XCircle, 
+  RefreshCcw, 
+  Plus, 
+  Save, 
+  BookmarkPlus 
+} from 'lucide-react';
 import { debouncedSaveServerStorage } from '../storageApi';
 import '../db.css';
 
@@ -64,10 +77,49 @@ export default function DBDashboard({ dbConfig = {} }) {
     };
   }, [connections, activeConnId]);
 
-  const environment = activeConn.environment || 'stage';
+  // Saved queries state
+  const [savedQueries, setSavedQueries] = useState(() => {
+    try {
+      const saved = localStorage.getItem('db_saved_queries');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.error('Error loading saved queries:', e);
+    }
+    return {};
+  });
 
-  const [query, setQuery] = useState(() => localStorage.getItem('db_query') || PAYMENT_QUERY);
-  const [savedQueries, setSavedQueries] = useState(() => JSON.parse(localStorage.getItem('db_saved_queries') || '{}'));
+  // By default, open the first saved query. If none, activeSavedQueryName is null.
+  const [activeSavedQueryName, setActiveSavedQueryName] = useState(() => {
+    const savedKeys = Object.keys(savedQueries);
+    if (savedKeys.length > 0) {
+      const lastActive = localStorage.getItem('db_active_saved_query_name');
+      if (lastActive && savedQueries[lastActive] !== undefined) {
+        return lastActive;
+      }
+      return savedKeys[0];
+    }
+    return null;
+  });
+
+  // Query pad text: default to active saved query, or empty if none
+  const [query, setQuery] = useState(() => {
+    const savedKeys = Object.keys(savedQueries);
+    if (savedKeys.length > 0) {
+      const lastActive = localStorage.getItem('db_active_saved_query_name');
+      if (lastActive && savedQueries[lastActive] !== undefined) {
+        return savedQueries[lastActive];
+      }
+      return savedQueries[savedKeys[0]];
+    }
+    // If no saved queries, open a new empty board
+    return '';
+  });
+
   const [tables, setTables] = useState([]);
   const [loadingTables, setLoadingTables] = useState(false);
   const [tableError, setTableError] = useState(null);
@@ -94,6 +146,14 @@ export default function DBDashboard({ dbConfig = {} }) {
   useEffect(() => {
     localStorage.setItem('db_query', query);
   }, [query]);
+
+  useEffect(() => {
+    if (activeSavedQueryName) {
+      localStorage.setItem('db_active_saved_query_name', activeSavedQueryName);
+    } else {
+      localStorage.removeItem('db_active_saved_query_name');
+    }
+  }, [activeSavedQueryName]);
 
   useEffect(() => {
     localStorage.setItem('db_saved_queries', JSON.stringify(savedQueries));
@@ -167,6 +227,7 @@ export default function DBDashboard({ dbConfig = {} }) {
 
   const handleSelectTable = (tableName) => {
     setSelectedTable(tableName);
+    setActiveSavedQueryName(null);
     const generatedQuery = `SELECT *
 FROM ${tableName}
 FETCH FIRST 10 ROWS ONLY`;
@@ -181,22 +242,61 @@ FETCH FIRST 10 ROWS ONLY`;
     return tables.filter(t => typeof t === 'string' && t.toLowerCase().includes(term));
   }, [tables, tableSearch]);
 
-  const saveCurrentQuery = () => {
+  // Open a new blank query pad
+  const handleNewQuery = () => {
+    setActiveSavedQueryName(null);
+    setSelectedTable('');
+    setQuery('');
+    setError(null);
+    setSuccessMsg(null);
+  };
+
+  // Save changes to current query (or Save As if new)
+  const handleSave = () => {
     if (!query.trim()) return;
-    const name = window.prompt("Enter a short name for this custom query:");
+    if (activeSavedQueryName) {
+      setSavedQueries(prev => ({ ...prev, [activeSavedQueryName]: query }));
+      setSuccessMsg(`Query "${activeSavedQueryName}" saved successfully.`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } else {
+      handleSaveAs();
+    }
+  };
+
+  // Save query under a new name
+  const handleSaveAs = () => {
+    if (!query.trim()) return;
+    const defaultName = activeSavedQueryName ? `${activeSavedQueryName} (Copy)` : 'My Query';
+    const name = window.prompt("Enter a name for this saved query:", defaultName);
     if (name && name.trim()) {
-      setSavedQueries(prev => ({ ...prev, [name.trim()]: query }));
+      const cleanName = name.trim();
+      setSavedQueries(prev => ({ ...prev, [cleanName]: query }));
+      setActiveSavedQueryName(cleanName);
+      setSelectedTable('');
+      setSuccessMsg(`Query saved as "${cleanName}".`);
+      setTimeout(() => setSuccessMsg(null), 3000);
     }
   };
 
   const deleteSavedQuery = (name, e) => {
     e.stopPropagation();
-    if (window.confirm(`Delete custom query "${name}"?`)) {
+    if (window.confirm(`Delete saved query "${name}"?`)) {
       setSavedQueries(prev => {
         const next = { ...prev };
         delete next[name];
         return next;
       });
+      if (activeSavedQueryName === name) {
+        const remainingKeys = Object.keys(savedQueries).filter(k => k !== name);
+        if (remainingKeys.length > 0) {
+          const nextKey = remainingKeys[0];
+          setActiveSavedQueryName(nextKey);
+          setQuery(savedQueries[nextKey]);
+        } else {
+          setActiveSavedQueryName(null);
+          setQuery('');
+        }
+      }
     }
   };
 
@@ -321,8 +421,14 @@ FETCH FIRST 10 ROWS ONLY`;
     );
   }, [result, search]);
 
+  const isCurrentQueryDirty = useMemo(() => {
+    if (!activeSavedQueryName) return false;
+    return savedQueries[activeSavedQueryName] !== query;
+  }, [activeSavedQueryName, savedQueries, query]);
+
   return (
     <div className="flex-col gap-6" style={{ marginTop: '0.5rem' }}>
+      {/* Top Header & Multi-Connection Switcher */}
       <div className="glass flex justify-between items-center" style={{ padding: '1rem 1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div className="flex items-center gap-3">
           <Database size={22} style={{ color: 'var(--accent-color)' }} />
@@ -361,22 +467,28 @@ FETCH FIRST 10 ROWS ONLY`;
         </div>
       </div>
 
+      {/* Query Pad Container */}
       <div className="glass" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        {/* Query Tabs & Presets Bar */}
         <div className="flex gap-2 items-center" style={{ marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-          <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginRight: '0.25rem' }}>Presets:</span>
+          {/* New Blank Query Button */}
           <button 
             className="btn" 
-            style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)' }}
-            onClick={() => { setSelectedTable(''); setQuery(PAYMENT_QUERY); }}
+            style={{ 
+              padding: '0.25rem 0.75rem', 
+              fontSize: '0.875rem', 
+              background: (!activeSavedQueryName && !selectedTable) ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255,255,255,0.05)', 
+              border: (!activeSavedQueryName && !selectedTable) ? '1px solid var(--accent-color)' : '1px solid var(--border-color)',
+              color: (!activeSavedQueryName && !selectedTable) ? '#60a5fa' : 'var(--text-primary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              fontWeight: (!activeSavedQueryName && !selectedTable) ? 600 : 500
+            }}
+            onClick={handleNewQuery}
+            title="Open a new blank query pad"
           >
-            Payments
-          </button>
-          <button 
-            className="btn" 
-            style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)' }}
-            onClick={() => { setSelectedTable(''); setQuery(OTP_QUERY); }}
-          >
-            OTP
+            <Plus size={14} /> New Query
           </button>
 
           {/* Table Dropdown with Search Bar */}
@@ -502,39 +614,86 @@ FETCH FIRST 10 ROWS ONLY`;
             )}
           </div>
 
-          {Object.entries(savedQueries).map(([name, q]) => (
-            <div key={name} className="flex items-center" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
-              <button 
-                className="btn" 
-                style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem', border: 'none', background: 'transparent' }}
-                onClick={() => { setSelectedTable(''); setQuery(q); }}
-                title={q}
-              >
-                {name}
-              </button>
-              <button 
-                onClick={(e) => deleteSavedQuery(name, e)}
-                style={{ padding: '0.25rem 0.5rem', background: 'transparent', border: 'none', color: 'var(--danger-color)', cursor: 'pointer', borderLeft: '1px solid var(--border-color)', opacity: 0.7 }}
-                title="Delete preset"
-              >
-                ×
-              </button>
-            </div>
-          ))}
+          <span style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', margin: '0 0.25rem' }}>|</span>
 
+          {/* Built-in Presets */}
           <button 
             className="btn" 
-            style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem', background: 'transparent', border: '1px dashed var(--accent-color)', color: 'var(--accent-color)', marginLeft: 'auto' }}
-            onClick={saveCurrentQuery}
-            disabled={!query.trim()}
+            style={{ padding: '0.25rem 0.65rem', fontSize: '0.82rem', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-color)' }}
+            onClick={() => { setSelectedTable(''); setActiveSavedQueryName(null); setQuery(PAYMENT_QUERY); }}
           >
-            + Save Current Query
+            Payments
           </button>
+          <button 
+            className="btn" 
+            style={{ padding: '0.25rem 0.65rem', fontSize: '0.82rem', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-color)' }}
+            onClick={() => { setSelectedTable(''); setActiveSavedQueryName(null); setQuery(OTP_QUERY); }}
+          >
+            OTP
+          </button>
+
+          {/* Saved Queries Pills */}
+          {Object.keys(savedQueries).length > 0 && (
+            <span style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', margin: '0 0.25rem' }}>|</span>
+          )}
+
+          {Object.entries(savedQueries).map(([name, q]) => {
+            const isSelected = activeSavedQueryName === name;
+            return (
+              <div 
+                key={name} 
+                className="flex items-center" 
+                style={{ 
+                  background: isSelected ? 'rgba(59, 130, 246, 0.18)' : 'rgba(255,255,255,0.05)', 
+                  border: isSelected ? '1px solid var(--accent-color)' : '1px solid var(--border-color)', 
+                  borderRadius: '6px',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <button 
+                  className="btn" 
+                  style={{ 
+                    padding: '0.25rem 0.55rem', 
+                    fontSize: '0.82rem', 
+                    border: 'none', 
+                    background: 'transparent',
+                    color: isSelected ? '#60a5fa' : 'var(--text-primary)',
+                    fontWeight: isSelected ? 600 : 400
+                  }}
+                  onClick={() => { 
+                    setSelectedTable(''); 
+                    setActiveSavedQueryName(name); 
+                    setQuery(q); 
+                  }}
+                  title={q}
+                >
+                  {name}
+                </button>
+                <button 
+                  onClick={(e) => deleteSavedQuery(name, e)}
+                  style={{ 
+                    padding: '0.25rem 0.45rem', 
+                    background: 'transparent', 
+                    border: 'none', 
+                    color: 'var(--danger-color)', 
+                    cursor: 'pointer', 
+                    borderLeft: '1px solid var(--border-color)', 
+                    opacity: 0.7 
+                  }}
+                  title={`Delete saved query "${name}"`}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
         </div>
+
+        {/* Query Text Area */}
         <textarea 
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Enter your SQL query here..."
+          placeholder="Enter your SQL query here or select a table / preset above..."
           spellCheck="false"
           style={{
             width: '100%',
@@ -550,29 +709,111 @@ FETCH FIRST 10 ROWS ONLY`;
             outline: 'none'
           }}
         />
-        <div className="flex justify-end gap-2">
-          {loading && (
-            <button 
-              className="btn" 
-              onClick={() => {
-                if (abortControllerRef.current) abortControllerRef.current.abort();
+
+        {/* Bottom Bar: Query Status on Left, Actions (Save, Save As, Cancel, Run Query) on Bottom Right */}
+        <div className="flex justify-between items-center flex-wrap gap-3" style={{ paddingTop: '0.25rem' }}>
+          {/* Left Status */}
+          <div className="flex items-center gap-2" style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+            {activeSavedQueryName ? (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span>Active Query:</span>
+                <span className="tag" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', fontWeight: 600 }}>
+                  {activeSavedQueryName}
+                </span>
+                {isCurrentQueryDirty && (
+                  <span style={{ color: '#f59e0b', fontSize: '0.78rem', fontStyle: 'italic', fontWeight: 500 }}>
+                    ● Unsaved changes
+                  </span>
+                )}
+              </div>
+            ) : selectedTable ? (
+              <div className="flex items-center gap-1.5">
+                <span>Table Explorer:</span>
+                <span className="tag" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', fontWeight: 600 }}>
+                  {selectedTable}
+                </span>
+              </div>
+            ) : (
+              <span style={{ fontStyle: 'italic' }}>
+                {query.trim() ? 'New Query (Unsaved)' : 'New Query (Empty Pad)'}
+              </span>
+            )}
+          </div>
+
+          {/* Bottom Right Actions */}
+          <div className="flex items-center gap-2">
+            {/* Save Button */}
+            <button
+              type="button"
+              className="btn"
+              onClick={handleSave}
+              disabled={!query.trim()}
+              style={{
+                padding: '0.35rem 0.75rem',
+                fontSize: '0.82rem',
+                background: 'rgba(255, 255, 255, 0.05)',
+                borderColor: isCurrentQueryDirty ? 'var(--accent-color)' : 'var(--border-color)',
+                color: isCurrentQueryDirty ? '#60a5fa' : 'var(--text-primary)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px'
               }}
-              style={{ borderColor: 'var(--danger-color)', color: 'var(--danger-color)', background: 'transparent' }}
+              title={activeSavedQueryName ? `Save changes to "${activeSavedQueryName}"` : "Save this query"}
             >
-              <XCircle size={16} /> Cancel
+              <Save size={14} />
+              Save
             </button>
-          )}
-          <button 
-            className="btn btn-primary" 
-            onClick={runQuery}
-            disabled={loading || !query.trim()}
-          >
-            {loading ? <Loader2 size={16} className="spinner" /> : <Play size={16} />}
-            {loading ? 'Executing...' : 'Run Query'}
-          </button>
+
+            {/* Save As Button */}
+            <button
+              type="button"
+              className="btn"
+              onClick={handleSaveAs}
+              disabled={!query.trim()}
+              style={{
+                padding: '0.35rem 0.75rem',
+                fontSize: '0.82rem',
+                background: 'rgba(255, 255, 255, 0.05)',
+                borderColor: 'var(--border-color)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+              title="Save as a new query preset"
+            >
+              <BookmarkPlus size={14} />
+              Save As...
+            </button>
+
+            {loading && (
+              <button 
+                type="button"
+                className="btn" 
+                onClick={() => {
+                  if (abortControllerRef.current) abortControllerRef.current.abort();
+                }}
+                style={{ borderColor: 'var(--danger-color)', color: 'var(--danger-color)', background: 'transparent', padding: '0.35rem 0.75rem', fontSize: '0.82rem' }}
+              >
+                <XCircle size={15} /> Cancel
+              </button>
+            )}
+
+            {/* Run Query Button */}
+            <button 
+              type="button"
+              className="btn btn-primary" 
+              onClick={runQuery}
+              disabled={loading || !query.trim()}
+              style={{ padding: '0.35rem 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              {loading ? <Loader2 size={15} className="spinner" /> : <Play size={15} />}
+              {loading ? 'Executing...' : 'Run Query'}
+            </button>
+          </div>
         </div>
       </div>
 
+      {/* Error and Success Banners */}
       {error && (
         <div className="glass flex items-center gap-3" style={{ padding: '1rem 1.25rem', borderColor: 'var(--danger-color)', color: 'var(--danger-color)', background: 'rgba(239, 68, 68, 0.08)', borderRadius: '8px', wordBreak: 'break-word' }}>
           <AlertCircle size={22} style={{ flexShrink: 0 }} />
@@ -584,12 +825,13 @@ FETCH FIRST 10 ROWS ONLY`;
       )}
 
       {successMsg && (
-        <div className="glass flex items-center gap-2" style={{ padding: '1rem', borderColor: 'var(--success-color)', color: 'var(--success-color)' }}>
-          <CheckCircle2 size={20} />
-          {successMsg}
+        <div className="glass flex items-center gap-2" style={{ padding: '0.85rem 1.25rem', borderColor: 'var(--success-color)', color: 'var(--success-color)', background: 'rgba(16, 185, 129, 0.1)', borderRadius: '8px' }}>
+          <CheckCircle2 size={18} />
+          <span style={{ fontSize: '0.85rem' }}>{successMsg}</span>
         </div>
       )}
 
+      {/* Results Table */}
       {result && (
         <div className="glass" style={{ padding: '1.5rem' }}>
           <div className="flex justify-between items-center" style={{ marginBottom: '1.5rem' }}>
