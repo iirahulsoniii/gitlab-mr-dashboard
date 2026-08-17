@@ -406,17 +406,12 @@ function App() {
       <div style={{ display: activeView === 'mr' ? 'block' : 'none' }}>
         <FilterPanel 
           filters={filters} 
-          onFilterChange={handleFilterChange} 
-          services={services}
-          authors={authors}
-          mergedByUsers={mergedByUsers}
-          branches={branches}
+          setFilters={setFilters} 
+          services={availableServices} 
           timeframe={timeframe}
-          onTimeframeChange={handleTimeframeChange}
-          onRefresh={handleRefresh}
-          loading={loading}
-          mrCount={filteredMRs.length}
-          ticketCount={jiraTickets.length}
+          setTimeframe={setTimeframe}
+          onSearch={handleSearch}
+          onReset={handleReset}
         />
 
         <div className="flex" style={{ borderBottom: '1px solid var(--border-color)', marginBottom: '1.5rem' }}>
@@ -442,7 +437,7 @@ function App() {
           </div>
         ) : (
           <>
-            {activeTab === 'mrs' && <MRList mrs={filteredMRs} />}
+            {activeTab === 'mrs' && <MRList mrs={filteredMRs} loading={loading} />}
             {activeTab === 'jira' && <JiraList tickets={jiraTickets} />}
           </>
         )}
