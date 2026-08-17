@@ -9,8 +9,17 @@ export default defineConfig({
       '/jira-api': {
         target: 'https://omantel-om.atlassian.net',
         changeOrigin: true,
+        timeout: 60000,
+        proxyTimeout: 60000,
         rewrite: (path) => path.replace(/^\/jira-api/, ''),
         configure: (proxy, _options) => {
+          proxy.on('error', (err, _req, res) => {
+            console.warn('[vite jira-api proxy error]:', err.message);
+            if (res && res.writeHead && !res.headersSent) {
+              res.writeHead(504, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: `Jira proxy connection error: ${err.message}` }));
+            }
+          });
           proxy.on('proxyReq', (proxyReq, req, _res) => {
             // Jira Cloud blocks cross-origin POST requests with 403 Forbidden.
             // By removing these headers, the request looks like a standard server-side 

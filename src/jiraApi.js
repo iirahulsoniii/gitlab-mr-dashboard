@@ -669,6 +669,31 @@ export async function fetchJiraAnalyticsIssues(config, { days = 30, projectKey =
     "comment"
   ];
 
+  const fetchWithRetry = async (url, options, maxRetries = 3) => {
+    let lastErr;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const res = await fetch(url, options);
+        if (res.status === 404) {
+          return res;
+        }
+        if (!res.ok && (res.status === 502 || res.status === 503 || res.status === 504 || res.status === 429)) {
+          const waitTime = attempt * 1200;
+          console.warn(`Jira API returned ${res.status}, retrying in ${waitTime}ms (attempt ${attempt}/${maxRetries})...`);
+          await new Promise(r => setTimeout(r, waitTime));
+          continue;
+        }
+        return res;
+      } catch (err) {
+        lastErr = err;
+        const waitTime = attempt * 1200;
+        console.warn(`Jira network/proxy error: ${err.message}, retrying in ${waitTime}ms (attempt ${attempt}/${maxRetries})...`);
+        await new Promise(r => setTimeout(r, waitTime));
+      }
+    }
+    throw lastErr || new Error('Jira request failed after retries.');
+  };
+
   let allIssues = [];
   let nextPageToken = null;
   let startAt = 0;
@@ -680,7 +705,6 @@ export async function fetchJiraAnalyticsIssues(config, { days = 30, projectKey =
     const payload = {
       jql,
       fields,
-      expand: "changelog",
       maxResults: 100
     };
     if (nextPageToken) {
@@ -689,7 +713,7 @@ export async function fetchJiraAnalyticsIssues(config, { days = 30, projectKey =
       payload.startAt = startAt;
     }
 
-    let response = await fetch('/jira-api/rest/api/3/search/jql', {
+    let response = await fetchWithRetry('/jira-api/rest/api/3/search/jql', {
       method: 'POST',
       headers,
       body: JSON.stringify(payload)
@@ -697,7 +721,7 @@ export async function fetchJiraAnalyticsIssues(config, { days = 30, projectKey =
 
     // Fallback to /search if /search/jql endpoint is unavailable
     if (response.status === 404) {
-      response = await fetch('/jira-api/rest/api/3/search', {
+      response = await fetchWithRetry('/jira-api/rest/api/3/search', {
         method: 'POST',
         headers,
         body: JSON.stringify(payload)
