@@ -33,6 +33,17 @@ export default function JiraAnalyticsDashboard({ config }) {
   // Timeframe Filter (Days)
   const [daysFilter, setDaysFilter] = useState(30);
 
+  // Optional Project Key Filter (e.g. 'CS' or '' for All)
+  const detectedProject = useMemo(() => {
+    if (config?.bauTicket) {
+      const match = config.bauTicket.match(/^([A-Z]+)-/);
+      if (match) return match[1];
+    }
+    return '';
+  }, [config?.bauTicket]);
+
+  const [projectKey, setProjectKey] = useState('');
+
   // Multi-Select Filters (null = All selected)
   const [selectedComponents, setSelectedComponents] = useState(null);
   const [selectedLabels, setSelectedLabels] = useState(null);
@@ -55,13 +66,13 @@ export default function JiraAnalyticsDashboard({ config }) {
     } else {
       setError('Please configure Jira Email and Token in Settings to view Analytics.');
     }
-  }, [config, daysFilter]);
+  }, [config, daysFilter, projectKey]);
 
   const loadData = async () => {
     setLoading(true);
     setError('');
     try {
-      const data = await fetchJiraAnalyticsIssues(config, { days: daysFilter });
+      const data = await fetchJiraAnalyticsIssues(config, { days: daysFilter, projectKey });
       setIssues(data);
     } catch (err) {
       setError(err.message || 'Failed to fetch Jira Analytics data.');
@@ -637,6 +648,30 @@ export default function JiraAnalyticsDashboard({ config }) {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Project Filter */}
+          <div className="flex items-center gap-1.5" style={{ background: 'rgba(255,255,255,0.05)', padding: '0.3rem 0.6rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Project:</span>
+            <select
+              value={projectKey}
+              onChange={e => setProjectKey(e.target.value)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-primary)',
+                fontSize: '0.82rem',
+                outline: 'none',
+                cursor: 'pointer',
+                fontWeight: 500
+              }}
+            >
+              <option value="">All Projects</option>
+              {detectedProject && <option value={detectedProject}>{detectedProject} Project</option>}
+              <option value="CS">CS</option>
+              <option value="OMAN">OMAN</option>
+              <option value="DIG">DIG</option>
+            </select>
+          </div>
+
           {/* Timeframe Selector */}
           <div className="flex items-center gap-1.5" style={{ background: 'rgba(255,255,255,0.05)', padding: '0.3rem 0.6rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
             <Calendar size={14} style={{ color: 'var(--text-secondary)' }} />

@@ -629,7 +629,7 @@ export async function fetchIssuesForAssignees(config, { accountIds = [], isCurre
 
 export async function fetchJiraAnalyticsIssues(config, { days = 30, projectKey = '' } = {}) {
   if (!config.email || !config.token) {
-    throw new Error('Jira Email and Token are required.');
+    throw new Error('Jira Email and Token are required in Settings.');
   }
 
   const authString = btoa(`${config.email}:${config.token}`);
@@ -639,13 +639,16 @@ export async function fetchJiraAnalyticsIssues(config, { days = 30, projectKey =
     'Content-Type': 'application/json'
   };
 
-  let jql = days > 0 
-    ? `(created >= -${days}d OR resolutiondate >= -${days}d OR updated >= -${days}d)` 
-    : 'created is not null';
-    
+  const jqlConditions = [];
   if (projectKey && projectKey.trim()) {
-    jql = `project = "${projectKey.trim()}" AND ${jql}`;
+    jqlConditions.push(`project = "${projectKey.trim().toUpperCase()}"`);
   }
+
+  if (days > 0) {
+    jqlConditions.push(`(created >= '-${days}d' OR resolved >= '-${days}d' OR updated >= '-${days}d')`);
+  }
+
+  let jql = jqlConditions.length > 0 ? jqlConditions.join(' AND ') : 'created is not null';
   jql += ' ORDER BY created DESC';
 
   const fields = [
@@ -660,11 +663,13 @@ export async function fetchJiraAnalyticsIssues(config, { days = 30, projectKey =
     "labels", 
     "assignee", 
     "reporter", 
-    "fixVersions"
+    "fixVersions",
+    "project"
   ];
 
   let allIssues = [];
   let nextPageToken = null;
+  let startAt = 0;
   let isLast = false;
   let maxPages = 20; // Up to 2,000 issues max
 
@@ -677,30 +682,51 @@ export async function fetchJiraAnalyticsIssues(config, { days = 30, projectKey =
     };
     if (nextPageToken) {
       payload.nextPageToken = nextPageToken;
+    } else if (startAt > 0) {
+      payload.startAt = startAt;
     }
 
-    const response = await fetch('/jira-api/rest/api/3/search/jql', {
+    let response = await fetch('/jira-api/rest/api/3/search/jql', {
       method: 'POST',
       headers,
       body: JSON.stringify(payload)
     });
 
+    // Fallback to /search if /search/jql endpoint is unavailable
+    if (response.status === 404) {
+      response = await fetch('/jira-api/rest/api/3/search', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      });
+    }
+
     if (!response.ok) {
       const errTxt = await response.text().catch(() => '');
-      throw new Error(`Jira API Error: ${response.status} ${response.statusText} - ${errTxt}`);
+      throw new Error(`Jira API Error (${response.status}): ${errTxt || response.statusText}`);
     }
 
     const data = await response.json();
-    allIssues = allIssues.concat(data.issues || []);
+    const fetched = data.issues || [];
+    allIssues = allIssues.concat(fetched);
+
+    if (fetched.length === 0) {
+      break;
+    }
 
     if (data.isLast !== undefined) {
       isLast = data.isLast;
+    } else if (data.total !== undefined) {
+      startAt += fetched.length;
+      isLast = startAt >= data.total;
     } else {
       isLast = true;
     }
 
     if (!isLast && data.nextPageToken) {
       nextPageToken = data.nextPageToken;
+    } else if (!isLast && !data.nextPageToken && data.total !== undefined) {
+      // Use startAt pagination
     } else {
       isLast = true;
     }
