@@ -21,7 +21,15 @@ import {
   PieChart, 
   Filter,
   CheckCircle,
-  HelpCircle
+  HelpCircle,
+  Bookmark,
+  Save,
+  Star,
+  Trash2,
+  Plus,
+  ChevronDown,
+  Check,
+  RotateCcw
 } from 'lucide-react';
 import '../jira.css';
 
@@ -30,8 +38,54 @@ export default function JiraAnalyticsDashboard({ config }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Saved Filter Profiles
+  const [savedFilters, setSavedFilters] = useState(() => {
+    try {
+      const stored = localStorage.getItem('jira_analytics_saved_filters');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.warn('Failed to load saved filters:', e);
+    }
+    return [];
+  });
+
+  // Active saved filter profile ID (null if custom/unsaved)
+  const [activeFilterId, setActiveFilterId] = useState(() => {
+    try {
+      const stored = localStorage.getItem('jira_analytics_saved_filters');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          const defaultFilter = parsed.find(f => f.isDefault);
+          if (defaultFilter) return defaultFilter.id;
+        }
+      }
+    } catch (e) {}
+    return null;
+  });
+
+  // Default settings from active default filter
+  const initialSettings = useMemo(() => {
+    try {
+      const stored = localStorage.getItem('jira_analytics_saved_filters');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          const defaultFilter = parsed.find(f => f.isDefault);
+          if (defaultFilter && defaultFilter.settings) {
+            return defaultFilter.settings;
+          }
+        }
+      }
+    } catch (e) {}
+    return null;
+  }, []);
+
   // Timeframe Filter (Days)
-  const [daysFilter, setDaysFilter] = useState(30);
+  const [daysFilter, setDaysFilter] = useState(() => initialSettings?.daysFilter ?? 30);
 
   // Optional Project Key Filter (e.g. 'CS' or '' for All)
   const detectedProject = useMemo(() => {
@@ -42,23 +96,200 @@ export default function JiraAnalyticsDashboard({ config }) {
     return '';
   }, [config?.bauTicket]);
 
-  const [projectKey, setProjectKey] = useState('');
+  const [projectKey, setProjectKey] = useState(() => initialSettings?.projectKey ?? '');
 
   // Multi-Select Filters (null = All selected)
-  const [selectedComponents, setSelectedComponents] = useState(null);
-  const [selectedLabels, setSelectedLabels] = useState(null);
-  const [selectedAssignees, setSelectedAssignees] = useState(null);
-  const [selectedWorkedBy, setSelectedWorkedBy] = useState(null);
-  const [selectedIssueTypes, setSelectedIssueTypes] = useState(null);
-  const [selectedStatuses, setSelectedStatuses] = useState(null);
+  const [selectedComponents, setSelectedComponents] = useState(() => initialSettings?.selectedComponents ?? null);
+  const [selectedLabels, setSelectedLabels] = useState(() => initialSettings?.selectedLabels ?? null);
+  const [selectedAssignees, setSelectedAssignees] = useState(() => initialSettings?.selectedAssignees ?? null);
+  const [selectedWorkedBy, setSelectedWorkedBy] = useState(() => initialSettings?.selectedWorkedBy ?? null);
+  const [selectedIssueTypes, setSelectedIssueTypes] = useState(() => initialSettings?.selectedIssueTypes ?? null);
+  const [selectedStatuses, setSelectedStatuses] = useState(() => initialSettings?.selectedStatuses ?? null);
 
   // Chart Mode: 'flow' (Per Day/Interval) or 'cumulative' (Burnup)
-  const [chartMode, setChartMode] = useState('flow');
+  const [chartMode, setChartMode] = useState(() => initialSettings?.chartMode ?? 'flow');
   const [hoveredDataPoint, setHoveredDataPoint] = useState(null);
 
   // Table Tab: 'all', 'created', 'resolved', 'unresolved'
-  const [tableTab, setTableTab] = useState('all');
+  const [tableTab, setTableTab] = useState(() => initialSettings?.tableTab ?? 'all');
   const [tableSearch, setTableSearch] = useState('');
+
+  // UI state for Saved Views Dropdown & Save Filter Modal
+  const [showSavedViewsMenu, setShowSavedViewsMenu] = useState(false);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [newFilterName, setNewFilterName] = useState('');
+  const [isDefaultCheckbox, setIsDefaultCheckbox] = useState(false);
+  const savedViewsDropdownRef = useRef(null);
+
+  // Close saved views dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (savedViewsDropdownRef.current && !savedViewsDropdownRef.current.contains(e.target)) {
+        setShowSavedViewsMenu(false);
+      }
+    };
+    if (showSavedViewsMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showSavedViewsMenu]);
+
+  // Check if current filter configuration differs from the active saved filter
+  const isFilterModified = useMemo(() => {
+    if (!activeFilterId) return false;
+    const active = savedFilters.find(f => f.id === activeFilterId);
+    if (!active || !active.settings) return false;
+    const s = active.settings;
+    return (
+      daysFilter !== s.daysFilter ||
+      projectKey !== s.projectKey ||
+      JSON.stringify(selectedComponents) !== JSON.stringify(s.selectedComponents) ||
+      JSON.stringify(selectedLabels) !== JSON.stringify(s.selectedLabels) ||
+      JSON.stringify(selectedAssignees) !== JSON.stringify(s.selectedAssignees) ||
+      JSON.stringify(selectedWorkedBy) !== JSON.stringify(s.selectedWorkedBy) ||
+      JSON.stringify(selectedIssueTypes) !== JSON.stringify(s.selectedIssueTypes) ||
+      JSON.stringify(selectedStatuses) !== JSON.stringify(s.selectedStatuses) ||
+      chartMode !== s.chartMode ||
+      tableTab !== s.tableTab
+    );
+  }, [
+    activeFilterId,
+    savedFilters,
+    daysFilter,
+    projectKey,
+    selectedComponents,
+    selectedLabels,
+    selectedAssignees,
+    selectedWorkedBy,
+    selectedIssueTypes,
+    selectedStatuses,
+    chartMode,
+    tableTab
+  ]);
+
+  const activeFilterName = useMemo(() => {
+    if (!activeFilterId) return null;
+    const found = savedFilters.find(f => f.id === activeFilterId);
+    return found ? found.name : null;
+  }, [activeFilterId, savedFilters]);
+
+  // Save current settings to localStorage helper
+  const persistSavedFilters = (updated) => {
+    setSavedFilters(updated);
+    try {
+      localStorage.setItem('jira_analytics_saved_filters', JSON.stringify(updated));
+    } catch (e) {
+      console.error('Failed to save Jira filters to localStorage:', e);
+    }
+  };
+
+  // Apply a saved filter
+  const handleApplySavedFilter = (filter) => {
+    if (!filter || !filter.settings) return;
+    const s = filter.settings;
+    setDaysFilter(s.daysFilter ?? 30);
+    setProjectKey(s.projectKey ?? '');
+    setSelectedComponents(s.selectedComponents ?? null);
+    setSelectedLabels(s.selectedLabels ?? null);
+    setSelectedAssignees(s.selectedAssignees ?? null);
+    setSelectedWorkedBy(s.selectedWorkedBy ?? null);
+    setSelectedIssueTypes(s.selectedIssueTypes ?? null);
+    setSelectedStatuses(s.selectedStatuses ?? null);
+    if (s.chartMode) setChartMode(s.chartMode);
+    if (s.tableTab) setTableTab(s.tableTab);
+    setActiveFilterId(filter.id);
+    setShowSavedViewsMenu(false);
+  };
+
+  // Save current view as a new preset
+  const handleSaveCurrentFilter = (e) => {
+    if (e) e.preventDefault();
+    const name = newFilterName.trim();
+    if (!name) return;
+
+    const currentSettings = {
+      daysFilter,
+      projectKey,
+      selectedComponents,
+      selectedLabels,
+      selectedAssignees,
+      selectedWorkedBy,
+      selectedIssueTypes,
+      selectedStatuses,
+      chartMode,
+      tableTab
+    };
+
+    const newId = 'filter_' + Date.now();
+    let updated = savedFilters.map(f => isDefaultCheckbox ? { ...f, isDefault: false } : f);
+
+    const newFilter = {
+      id: newId,
+      name,
+      isDefault: isDefaultCheckbox,
+      createdAt: new Date().toISOString(),
+      settings: currentSettings
+    };
+
+    updated.push(newFilter);
+    persistSavedFilters(updated);
+    setActiveFilterId(newId);
+    setNewFilterName('');
+    setIsDefaultCheckbox(false);
+    setShowSaveModal(false);
+  };
+
+  // Update existing active saved filter with current settings
+  const handleUpdateActiveFilter = () => {
+    if (!activeFilterId) return;
+    const currentSettings = {
+      daysFilter,
+      projectKey,
+      selectedComponents,
+      selectedLabels,
+      selectedAssignees,
+      selectedWorkedBy,
+      selectedIssueTypes,
+      selectedStatuses,
+      chartMode,
+      tableTab
+    };
+
+    const updated = savedFilters.map(f => {
+      if (f.id === activeFilterId) {
+        return {
+          ...f,
+          settings: currentSettings,
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return f;
+    });
+
+    persistSavedFilters(updated);
+  };
+
+  // Delete a saved filter
+  const handleDeleteSavedFilter = (id, e) => {
+    if (e) e.stopPropagation();
+    const updated = savedFilters.filter(f => f.id !== id);
+    persistSavedFilters(updated);
+    if (activeFilterId === id) {
+      setActiveFilterId(null);
+    }
+  };
+
+  // Toggle default state of a saved filter
+  const handleToggleDefault = (id, e) => {
+    if (e) e.stopPropagation();
+    const updated = savedFilters.map(f => ({
+      ...f,
+      isDefault: f.id === id ? !f.isDefault : false
+    }));
+    persistSavedFilters(updated);
+  };
 
   // Load issues from Jira
   useEffect(() => {
@@ -696,7 +927,129 @@ export default function JiraAnalyticsDashboard({ config }) {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Saved Views / Presets Dropdown */}
+          <div ref={savedViewsDropdownRef} style={{ position: 'relative' }}>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setShowSavedViewsMenu(!showSavedViewsMenu)}
+              style={{
+                fontSize: '0.82rem',
+                padding: '0.35rem 0.75rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: activeFilterId ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                borderColor: activeFilterId ? 'var(--accent-color)' : 'var(--border-color)',
+                color: activeFilterId ? '#60a5fa' : 'var(--text-primary)',
+                fontWeight: activeFilterId ? 600 : 400
+              }}
+            >
+              <Bookmark size={14} style={{ color: activeFilterId ? 'var(--accent-color)' : 'var(--text-secondary)' }} />
+              <span style={{ maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {activeFilterName ? `View: ${activeFilterName}` : `Saved Views (${savedFilters.length})`}
+              </span>
+              {isFilterModified && <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#f59e0b' }} title="Filters modified from saved view"></span>}
+              <ChevronDown size={13} style={{ opacity: 0.7, transform: showSavedViewsMenu ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
+            </button>
+
+            {/* Saved Views Menu Popover */}
+            {showSavedViewsMenu && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 6px)',
+                  right: 0,
+                  minWidth: '280px',
+                  maxWidth: '340px',
+                  zIndex: 99999,
+                  boxShadow: '0 20px 45px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.15)',
+                  borderRadius: '8px',
+                  padding: '0.65rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.5rem',
+                  background: '#1e293b',
+                  border: '1px solid rgba(255, 255, 255, 0.18)'
+                }}
+              >
+                <div className="flex justify-between items-center" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '0.4rem' }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Saved Filter Presets
+                  </span>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      setShowSavedViewsMenu(false);
+                      setShowSaveModal(true);
+                    }}
+                    style={{ padding: '0.15rem 0.45rem', fontSize: '0.72rem', background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', borderColor: 'var(--accent-color)' }}
+                  >
+                    <Plus size={12} /> Save Current
+                  </button>
+                </div>
+
+                {/* Preset List */}
+                <div style={{ maxHeight: '240px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {savedFilters.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
+                      No saved views yet. Click "Save Current" to bookmark this filter configuration.
+                    </div>
+                  ) : (
+                    savedFilters.map(filter => {
+                      const isActive = filter.id === activeFilterId;
+                      return (
+                        <div
+                          key={filter.id}
+                          onClick={() => handleApplySavedFilter(filter)}
+                          className="flex justify-between items-center"
+                          style={{
+                            padding: '0.45rem 0.55rem',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            background: isActive ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                            border: isActive ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid transparent',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+                            <button
+                              type="button"
+                              onClick={(e) => handleToggleDefault(filter.id, e)}
+                              title={filter.isDefault ? "Default startup view (click to unset)" : "Set as default startup view"}
+                              style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', color: filter.isDefault ? '#eab308' : 'var(--text-muted)' }}
+                            >
+                              <Star size={13} fill={filter.isDefault ? '#eab308' : 'none'} />
+                            </button>
+                            <span style={{ fontSize: '0.8rem', fontWeight: isActive ? 600 : 400, color: isActive ? '#60a5fa' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {filter.name}
+                            </span>
+                            {isActive && <Check size={12} style={{ color: 'var(--accent-color)', flexShrink: 0 }} />}
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => handleDeleteSavedFilter(filter.id, e)}
+                              title="Delete preset"
+                              style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '2px', display: 'flex' }}
+                              onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
+                              onMouseLeave={e => e.currentTarget.style.color = 'var(--text-muted)'}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Project Filter */}
           <div className="flex items-center gap-1.5" style={{ background: 'rgba(255,255,255,0.05)', padding: '0.3rem 0.6rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
             <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Project:</span>
@@ -856,6 +1209,49 @@ export default function JiraAnalyticsDashboard({ config }) {
             searchPlaceholder="Search statuses..."
           />
 
+          {/* Save / Update View Actions */}
+          {activeFilterId && isFilterModified ? (
+            <div className="flex items-center gap-1.5" style={{ background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', padding: '0.2rem 0.5rem', borderRadius: '6px' }}>
+              <span style={{ fontSize: '0.72rem', color: '#fbbf24', fontWeight: 500 }}>
+                ● {activeFilterName} (modified)
+              </span>
+              <button
+                type="button"
+                className="btn"
+                onClick={handleUpdateActiveFilter}
+                style={{ padding: '0.2rem 0.45rem', fontSize: '0.72rem', background: '#f59e0b', color: '#000', border: 'none', fontWeight: 600 }}
+                title="Update active preset with current filters"
+              >
+                <Save size={11} /> Update
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setShowSaveModal(true)}
+                style={{ padding: '0.2rem 0.45rem', fontSize: '0.72rem', background: 'rgba(255,255,255,0.08)' }}
+                title="Save as a new preset"
+              >
+                Save As New
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setShowSaveModal(true)}
+              style={{
+                padding: '0.25rem 0.6rem',
+                fontSize: '0.75rem',
+                background: 'rgba(59, 130, 246, 0.12)',
+                borderColor: 'rgba(59, 130, 246, 0.3)',
+                color: '#60a5fa'
+              }}
+              title="Bookmark current filter configuration as a saved view"
+            >
+              <Bookmark size={12} /> Save View
+            </button>
+          )}
+
           {/* Reset Filters Shortcut */}
           {activeFiltersCount > 0 && (
             <button
@@ -879,6 +1275,135 @@ export default function JiraAnalyticsDashboard({ config }) {
           Matching <strong>{filteredIssues.length}</strong> of {issues.length} total issues
         </span>
       </div>
+
+      {/* Save Filter View Modal Dialog */}
+      {showSaveModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.7)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100000,
+            padding: '1rem'
+          }}
+          onClick={() => setShowSaveModal(false)}
+        >
+          <div
+            className="glass"
+            style={{
+              width: '100%',
+              maxWidth: '440px',
+              background: '#1e293b',
+              border: '1px solid rgba(255, 255, 255, 0.18)',
+              borderRadius: '12px',
+              padding: '1.5rem',
+              boxShadow: '0 25px 60px rgba(0, 0, 0, 0.85)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '1.25rem'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '0.75rem' }}>
+              <div className="flex items-center gap-2">
+                <Bookmark size={18} style={{ color: 'var(--accent-color)' }} />
+                <h4 style={{ margin: 0, fontSize: '1.05rem', color: 'var(--text-primary)' }}>Save Filter View</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSaveModal(false)}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '2px' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCurrentFilter} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="flex-col gap-1.5">
+                <label style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                  View Name
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Core Team CS (30d), Production Bugs..."
+                  value={newFilterName}
+                  onChange={e => setNewFilterName(e.target.value)}
+                  autoFocus
+                  required
+                  style={{
+                    background: 'rgba(0,0,0,0.3)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '6px',
+                    padding: '0.6rem 0.8rem',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.88rem',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+
+              {/* Set as Default View Checkbox */}
+              <label className="flex items-center gap-2" style={{ cursor: 'pointer', fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                <input
+                  type="checkbox"
+                  checked={isDefaultCheckbox}
+                  onChange={e => setIsDefaultCheckbox(e.target.checked)}
+                  style={{ cursor: 'pointer', accentColor: 'var(--accent-color)' }}
+                />
+                <span className="flex items-center gap-1.5">
+                  <Star size={13} style={{ color: isDefaultCheckbox ? '#eab308' : 'var(--text-secondary)' }} fill={isDefaultCheckbox ? '#eab308' : 'none'} />
+                  Set as default view on startup
+                </span>
+              </label>
+
+              {/* Preview Configuration Tags */}
+              <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.75rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <span style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: '6px' }}>
+                  Filters Included in this View:
+                </span>
+                <div className="flex gap-1.5 flex-wrap" style={{ fontSize: '0.74rem' }}>
+                  <span className="tag" style={{ background: 'rgba(59,130,246,0.15)', color: '#60a5fa' }}>Timeframe: {daysFilter}d</span>
+                  <span className="tag" style={{ background: 'rgba(59,130,246,0.15)', color: '#60a5fa' }}>Project: {projectKey || 'All'}</span>
+                  <span className="tag" style={{ background: 'rgba(255,255,255,0.08)' }}>Components: {selectedComponents ? `${selectedComponents.length} selected` : 'All'}</span>
+                  <span className="tag" style={{ background: 'rgba(255,255,255,0.08)' }}>Assignees: {selectedAssignees ? `${selectedAssignees.length} selected` : 'All'}</span>
+                  <span className="tag" style={{ background: 'rgba(255,255,255,0.08)' }}>Worked By: {selectedWorkedBy ? `${selectedWorkedBy.length} selected` : 'All'}</span>
+                </div>
+              </div>
+
+              {/* Form Buttons */}
+              <div className="flex justify-end gap-2" style={{ marginTop: '0.5rem' }}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setShowSaveModal(false)}
+                  style={{ padding: '0.45rem 0.9rem', fontSize: '0.82rem' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn"
+                  disabled={!newFilterName.trim()}
+                  style={{
+                    padding: '0.45rem 1rem',
+                    fontSize: '0.82rem',
+                    background: 'var(--accent-color)',
+                    color: '#fff',
+                    borderColor: 'var(--accent-color)',
+                    fontWeight: 600
+                  }}
+                >
+                  <Save size={13} /> Save View
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Error Message Display */}
       {error && (
