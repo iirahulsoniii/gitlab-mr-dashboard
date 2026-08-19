@@ -1,58 +1,61 @@
 @echo off
-setlocal EnableDelayedExpansion
+setlocal
 
 REM ==============================================================================
-REM GitLab MR & Jira Analytics Dashboard - Zero-Config Windows Setup & Startup Script
+REM GitLab MR and Jira Analytics Dashboard - Windows Startup Script
 REM ==============================================================================
 
-title GitLab MR ^& Jira Analytics Dashboard Launcher
+title GitLab MR and Jira Analytics Dashboard Launcher
 cd /d "%~dp0"
 
 echo ================================================================
-echo    GitLab MR ^& Jira Analytics Dashboard - Startup Script
+echo    GitLab MR and Jira Analytics Dashboard - Startup Script
 echo ================================================================
 echo.
 
 REM ------------------------------------------------------------------------------
-REM 1. Check Node.js and NPM
+REM 1. Check Node.js
 REM ------------------------------------------------------------------------------
-echo [1/4] Checking Node.js environment...
+echo [1/4] Checking Node.js installation...
 where node >nul 2>nul
 if %errorlevel% neq 0 (
-    echo [ERROR] Node.js is not installed on this machine!
+    echo.
+    echo [ERROR] Node.js is not installed or not found in system PATH.
+    echo.
     echo Opening https://nodejs.org/ in your browser...
     start https://nodejs.org/
-    echo Please install Node.js (LTS version) and run this script again.
+    echo.
+    echo Please install Node.js (LTS version), restart Command Prompt, and run this script again.
     echo.
     pause
     exit /b 1
 )
 
-for /f "tokens=*" %%v in ('node -v') do set NODE_VERSION=%%v
-for /f "tokens=*" %%v in ('npm -v') do set NPM_VERSION=%%v
-echo [OK] Node.js detected: %NODE_VERSION% (npm %NPM_VERSION%)
+echo [OK] Node.js is available.
 echo.
 
 REM ------------------------------------------------------------------------------
-REM 2. Install Node Dependencies
+REM 2. Install Node Dependencies if needed
 REM ------------------------------------------------------------------------------
 echo [2/4] Checking Node dependencies...
 if not exist "node_modules\" (
-    echo Installing node dependencies (one-time setup, please wait)...
+    echo Dependencies not found. Installing node packages (one-time setup, please wait)...
     call npm install
     if %errorlevel% neq 0 (
-        echo [ERROR] npm install failed.
+        echo.
+        echo [ERROR] Failed to install npm dependencies.
+        echo.
         pause
         exit /b 1
     )
-    echo [OK] Node packages installed.
+    echo [OK] Dependencies installed successfully.
 ) else (
-    echo [OK] Node packages ready.
+    echo [OK] Dependencies are ready.
 )
 echo.
 
 REM ------------------------------------------------------------------------------
-REM 3. Check Python & Start Database Backend (Optional)
+REM 3. Python Backend Setup (Optional for DB Dashboard)
 REM ------------------------------------------------------------------------------
 echo [3/4] Checking Python Database Backend...
 where python >nul 2>nul
@@ -62,13 +65,13 @@ if %errorlevel% equ 0 (
             echo Creating Python virtual environment in db-backend\venv...
             python -m venv db-backend\venv
         )
-        echo Installing Python requirements...
-        call db-backend\venv\Scripts\pip install --quiet --upgrade pip
-        call db-backend\venv\Scripts\pip install --quiet -r db-backend\requirements.txt 2>nul
-        
-        echo Starting Database Backend on port 8000...
-        start "DB-Backend" /min db-backend\venv\Scripts\python -m uvicorn main:app --port 8000 --app-dir db-backend
-        echo [OK] Database Backend started.
+        if exist "db-backend\venv\Scripts\pip.exe" (
+            echo Ensuring Python dependencies are installed...
+            call db-backend\venv\Scripts\pip.exe install --quiet --upgrade pip
+            call db-backend\venv\Scripts\pip.exe install --quiet -r db-backend\requirements.txt 2>nul
+            start "DB-Backend" /min db-backend\venv\Scripts\python.exe -m uvicorn main:app --port 8000 --app-dir db-backend
+            echo [OK] Database Backend running on port 8000.
+        )
     )
 ) else (
     echo [INFO] Python not found. Database backend skipped. Jira and GitLab features will work normally.
@@ -76,7 +79,7 @@ if %errorlevel% equ 0 (
 echo.
 
 REM ------------------------------------------------------------------------------
-REM 4. Start Vite Frontend & Open Browser
+REM 4. Start Frontend Server and Open Browser
 REM ------------------------------------------------------------------------------
 echo [4/4] Starting Dashboard Web Application...
 echo.
@@ -85,11 +88,20 @@ echo    Application is running!
 echo    Local URL: http://localhost:5173
 echo ================================================================
 echo.
-echo Leave this window open while using the application.
+echo Leave this window open while using the dashboard.
 echo Press Ctrl+C to stop.
 echo.
 
-REM Open browser after 2 seconds in background
-start "" cmd /c "timeout /t 2 >nul & start http://localhost:5173"
+REM Open browser
+start http://localhost:5173
 
-call npx vite --port 5173 --host 127.0.0.1
+REM Run Vite frontend server
+if exist "node_modules\vite\bin\vite.js" (
+    node node_modules\vite\bin\vite.js --port 5173 --host 127.0.0.1
+) else (
+    call npm run dev:frontend
+)
+
+echo.
+echo Application server stopped.
+pause
