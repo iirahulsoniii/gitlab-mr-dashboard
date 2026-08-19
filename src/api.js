@@ -74,6 +74,7 @@ async function fetchGitLabMRs(instance, timeframe, deepSearch) {
       id: `gl-${mr.id}`,
       iid: mr.iid,
       title: mr.title,
+      description: mr.description || '',
       state: mr.state, // 'opened', 'closed', 'merged'
       web_url: mr.web_url,
       source_branch: mr.source_branch,

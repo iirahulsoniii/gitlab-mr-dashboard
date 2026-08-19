@@ -106,9 +106,18 @@ export default function JiraAnalyticsDashboard({ config }) {
   const [selectedIssueTypes, setSelectedIssueTypes] = useState(() => initialSettings?.selectedIssueTypes ?? null);
   const [selectedStatuses, setSelectedStatuses] = useState(() => initialSettings?.selectedStatuses ?? null);
 
+  // Graph Metric Dimension: 'created_vs_resolved', 'created', 'resolved', 'hours', 'updated', 'by_status', 'by_issuetype', 'by_priority', 'by_component', 'by_worker'
+  const [graphMetric, setGraphMetric] = useState(() => initialSettings?.graphMetric ?? 'created_vs_resolved');
+
+  // Chart Visual Type: 'spline' (Smooth Spline Area), 'stepped' (Stepped Lines), 'bars' (Grouped Bars)
+  const [chartType, setChartType] = useState(() => initialSettings?.chartType ?? 'spline');
+
   // Chart Mode: 'flow' (Per Day/Interval) or 'cumulative' (Burnup)
   const [chartMode, setChartMode] = useState(() => initialSettings?.chartMode ?? 'flow');
   const [hoveredDataPoint, setHoveredDataPoint] = useState(null);
+
+  // Set of disabled series IDs for interactive legend toggles
+  const [disabledSeries, setDisabledSeries] = useState(new Set());
 
   // Table Tab: 'all', 'created', 'resolved', 'unresolved'
   const [tableTab, setTableTab] = useState(() => initialSettings?.tableTab ?? 'all');
@@ -151,6 +160,8 @@ export default function JiraAnalyticsDashboard({ config }) {
       JSON.stringify(selectedWorkedBy) !== JSON.stringify(s.selectedWorkedBy) ||
       JSON.stringify(selectedIssueTypes) !== JSON.stringify(s.selectedIssueTypes) ||
       JSON.stringify(selectedStatuses) !== JSON.stringify(s.selectedStatuses) ||
+      (graphMetric !== (s.graphMetric ?? 'created_vs_resolved')) ||
+      (chartType !== (s.chartType ?? 'spline')) ||
       chartMode !== s.chartMode ||
       tableTab !== s.tableTab
     );
@@ -165,6 +176,8 @@ export default function JiraAnalyticsDashboard({ config }) {
     selectedWorkedBy,
     selectedIssueTypes,
     selectedStatuses,
+    graphMetric,
+    chartType,
     chartMode,
     tableTab
   ]);
@@ -197,8 +210,11 @@ export default function JiraAnalyticsDashboard({ config }) {
     setSelectedWorkedBy(s.selectedWorkedBy ?? null);
     setSelectedIssueTypes(s.selectedIssueTypes ?? null);
     setSelectedStatuses(s.selectedStatuses ?? null);
+    if (s.graphMetric) setGraphMetric(s.graphMetric);
+    if (s.chartType) setChartType(s.chartType);
     if (s.chartMode) setChartMode(s.chartMode);
     if (s.tableTab) setTableTab(s.tableTab);
+    setDisabledSeries(new Set());
     setActiveFilterId(filter.id);
     setShowSavedViewsMenu(false);
   };
@@ -218,6 +234,8 @@ export default function JiraAnalyticsDashboard({ config }) {
       selectedWorkedBy,
       selectedIssueTypes,
       selectedStatuses,
+      graphMetric,
+      chartType,
       chartMode,
       tableTab
     };
@@ -253,6 +271,8 @@ export default function JiraAnalyticsDashboard({ config }) {
       selectedWorkedBy,
       selectedIssueTypes,
       selectedStatuses,
+      graphMetric,
+      chartType,
       chartMode,
       tableTab
     };
@@ -524,7 +544,11 @@ export default function JiraAnalyticsDashboard({ config }) {
         if (contributors.length === 0) {
           if (!selectedWorkedBy.includes('__unassigned__')) return false;
         } else {
-          const hasMatch = contributors.some(c => selectedWorkedBy.includes(c.accountId));
+          const hasMatch = contributors.some(c => 
+            selectedWorkedBy.includes(c.accountId) ||
+            (c.emailAddress && selectedWorkedBy.includes(c.emailAddress)) ||
+            (c.displayName && selectedWorkedBy.includes(c.displayName))
+          );
           if (!hasMatch) return false;
         }
       }
@@ -543,7 +567,7 @@ export default function JiraAnalyticsDashboard({ config }) {
 
       return true;
     });
-  }, [issues, selectedComponents, selectedLabels, selectedAssignees, selectedIssueTypes, selectedStatuses]);
+  }, [issues, selectedComponents, selectedLabels, selectedAssignees, selectedWorkedBy, selectedIssueTypes, selectedStatuses]);
 
   // Determine active filter count
   const activeFiltersCount = useMemo(() => {
@@ -624,98 +648,6 @@ export default function JiraAnalyticsDashboard({ config }) {
     };
   }, [filteredIssues, daysFilter]);
 
-  // Timeline / Time-series Aggregation for Created vs. Resolved
-  const timelineData = useMemo(() => {
-    const intervals = Math.min(daysFilter, 90);
-    const dayMap = {};
-
-    // Initialize all dates in range
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    for (let d = daysFilter - 1; d >= 0; d--) {
-      const date = new Date(today);
-      date.setDate(date.getDate() - d);
-      const key = date.toISOString().slice(0, 10);
-      dayMap[key] = {
-        dateStr: key,
-        displayDate: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-        created: 0,
-        resolved: 0,
-        createdTickets: [],
-        resolvedTickets: []
-      };
-    }
-
-    filteredIssues.forEach(i => {
-      // Created date
-      if (i.fields?.created) {
-        const cKey = i.fields.created.slice(0, 10);
-        if (dayMap[cKey]) {
-          dayMap[cKey].created += 1;
-          dayMap[cKey].createdTickets.push(i.key);
-        }
-      }
-
-      // Resolved date
-      if (i.fields?.resolutiondate) {
-        const rKey = i.fields.resolutiondate.slice(0, 10);
-        if (dayMap[rKey]) {
-          dayMap[rKey].resolved += 1;
-          dayMap[rKey].resolvedTickets.push(i.key);
-        }
-      } else if (isIssueResolved(i) && i.fields?.updated) {
-        const uKey = i.fields.updated.slice(0, 10);
-        if (dayMap[uKey]) {
-          dayMap[uKey].resolved += 1;
-          dayMap[uKey].resolvedTickets.push(i.key);
-        }
-      }
-    });
-
-    let rawList = Object.values(dayMap).sort((a, b) => a.dateStr.localeCompare(b.dateStr));
-
-    // If timeframe is large (>45 days), group by week for smooth rendering
-    if (daysFilter > 45) {
-      const weekly = [];
-      let currentChunk = null;
-      rawList.forEach((item, idx) => {
-        if (idx % 7 === 0 || !currentChunk) {
-          if (currentChunk) weekly.push(currentChunk);
-          currentChunk = {
-            dateStr: item.dateStr,
-            displayDate: item.displayDate,
-            created: 0,
-            resolved: 0,
-            createdTickets: [],
-            resolvedTickets: []
-          };
-        }
-        currentChunk.created += item.created;
-        currentChunk.resolved += item.resolved;
-        currentChunk.createdTickets.push(...item.createdTickets);
-        currentChunk.resolvedTickets.push(...item.resolvedTickets);
-      });
-      if (currentChunk) weekly.push(currentChunk);
-      rawList = weekly;
-    }
-
-    // Calculate cumulative if needed
-    let cumCreated = 0;
-    let cumResolved = 0;
-
-    return rawList.map(item => {
-      cumCreated += item.created;
-      cumResolved += item.resolved;
-      return {
-        ...item,
-        cumCreated,
-        cumResolved,
-        netChange: item.created - item.resolved
-      };
-    });
-  }, [filteredIssues, daysFilter]);
-
   // Breakdown by Status Category
   const statusCategoryBreakdown = useMemo(() => {
     const counts = { done: 0, 'in-progress': 0, qa: 0, todo: 0 };
@@ -776,6 +708,244 @@ export default function JiraAnalyticsDashboard({ config }) {
       .sort((a, b) => b.total - a.total)
       .slice(0, 8); // Top 8 components
   }, [filteredIssues]);
+
+  // Define dynamic series based on chosen graphMetric dimension
+  const seriesDefinitions = useMemo(() => {
+    switch (graphMetric) {
+      case 'created':
+        return [{ id: 'created', label: 'Created Issues', color: '#f97316', key: 'created' }];
+      case 'resolved':
+        return [{ id: 'resolved', label: 'Resolved / Closed', color: '#10b981', key: 'resolved' }];
+      case 'hours':
+        return [{ id: 'hours', label: 'Logged Hours (hrs)', color: '#06b6d4', key: 'hours' }];
+      case 'updated':
+        return [{ id: 'updated', label: 'Updated / Active', color: '#8b5cf6', key: 'updated' }];
+      case 'by_status':
+        return [
+          { id: 'done', label: 'Done / Resolved', color: '#10b981', key: 'status_done' },
+          { id: 'in_progress', label: 'In Progress', color: '#3b82f6', key: 'status_in_progress' },
+          { id: 'qa', label: 'QA / Review', color: '#f59e0b', key: 'status_qa' },
+          { id: 'todo', label: 'To Do / Open', color: '#94a3b8', key: 'status_todo' }
+        ];
+      case 'by_issuetype': {
+        const topTypes = issueTypeBreakdown.slice(0, 5);
+        const palette = ['#ef4444', '#10b981', '#3b82f6', '#8b5cf6', '#f59e0b'];
+        if (topTypes.length === 0) return [{ id: 'Task', label: 'Tasks', color: '#3b82f6', key: 'type_Task' }];
+        return topTypes.map((t, idx) => ({
+          id: t.type,
+          label: t.type,
+          color: palette[idx % palette.length],
+          key: `type_${t.type}`
+        }));
+      }
+      case 'by_priority':
+        return [
+          { id: 'Highest', label: 'Highest / Blocker', color: '#ef4444', key: 'prio_Highest' },
+          { id: 'High', label: 'High', color: '#f97316', key: 'prio_High' },
+          { id: 'Medium', label: 'Medium', color: '#eab308', key: 'prio_Medium' },
+          { id: 'Low', label: 'Low', color: '#3b82f6', key: 'prio_Low' }
+        ];
+      case 'by_component': {
+        const topComps = componentBreakdown.slice(0, 5);
+        const palette = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'];
+        if (topComps.length === 0) return [{ id: 'No Component', label: 'All Components', color: '#3b82f6', key: 'comp_none' }];
+        return topComps.map((c, idx) => ({
+          id: c.name,
+          label: c.name,
+          color: palette[idx % palette.length],
+          key: `comp_${c.name}`
+        }));
+      }
+      case 'by_worker': {
+        const topWorkers = availableWorkedBy.filter(u => u.id !== '__unassigned__').slice(0, 5);
+        const palette = ['#6366f1', '#10b981', '#f97316', '#06b6d4', '#ec4899'];
+        if (topWorkers.length === 0) return [{ id: 'all', label: 'All Contributors', color: '#6366f1', key: 'worker_all' }];
+        return topWorkers.map((w, idx) => ({
+          id: w.id,
+          label: w.label,
+          color: palette[idx % palette.length],
+          key: `worker_${w.id}`
+        }));
+      }
+      case 'created_vs_resolved':
+      default:
+        return [
+          { id: 'created', label: 'Created', color: '#f97316', key: 'created' },
+          { id: 'resolved', label: 'Resolved', color: '#10b981', key: 'resolved' }
+        ];
+    }
+  }, [graphMetric, issueTypeBreakdown, componentBreakdown, availableWorkedBy]);
+
+  // Active (non-disabled) series list
+  const activeSeriesList = useMemo(() => {
+    return seriesDefinitions.filter(s => !disabledSeries.has(s.id));
+  }, [seriesDefinitions, disabledSeries]);
+
+  const toggleSeries = (id) => {
+    setDisabledSeries(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        // Keep at least 1 series enabled
+        if (seriesDefinitions.length - next.size > 1) {
+          next.add(id);
+        }
+      }
+      return next;
+    });
+  };
+
+  // Timeline / Time-series Aggregation for all Dynamic Dimensions
+  const timelineData = useMemo(() => {
+    const dayMap = {};
+
+    // Initialize all dates in range
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    for (let d = daysFilter - 1; d >= 0; d--) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - d);
+      const key = date.toISOString().slice(0, 10);
+      dayMap[key] = {
+        dateStr: key,
+        displayDate: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        created: 0,
+        resolved: 0,
+        hours: 0,
+        updated: 0,
+        values: {}
+      };
+    }
+
+    filteredIssues.forEach(i => {
+      const statusCat = getStatusCategory(i.fields?.status?.name, i.fields?.status?.statusCategory?.key);
+      const isResolved = isIssueResolved(i);
+      const typeName = i.fields?.issuetype?.name || 'Task';
+      const prioName = i.fields?.priority?.name || 'Medium';
+      const comps = (i.fields?.components || []).map(c => c.name);
+      const contributors = i.contributors || [];
+
+      // 1. Created date
+      if (i.fields?.created) {
+        const cKey = i.fields.created.slice(0, 10);
+        if (dayMap[cKey]) {
+          dayMap[cKey].created += 1;
+          dayMap[cKey].values[`type_${typeName}`] = (dayMap[cKey].values[`type_${typeName}`] || 0) + 1;
+          dayMap[cKey].values[`prio_${prioName}`] = (dayMap[cKey].values[`prio_${prioName}`] || 0) + 1;
+          comps.forEach(cn => {
+            dayMap[cKey].values[`comp_${cn}`] = (dayMap[cKey].values[`comp_${cn}`] || 0) + 1;
+          });
+        }
+      }
+
+      // 2. Resolved date
+      if (i.fields?.resolutiondate) {
+        const rKey = i.fields.resolutiondate.slice(0, 10);
+        if (dayMap[rKey]) {
+          dayMap[rKey].resolved += 1;
+        }
+      } else if (isResolved && i.fields?.updated) {
+        const uKey = i.fields.updated.slice(0, 10);
+        if (dayMap[uKey]) {
+          dayMap[uKey].resolved += 1;
+        }
+      }
+
+      // 3. Updated / Activity date
+      if (i.fields?.updated) {
+        const uKey = i.fields.updated.slice(0, 10);
+        if (dayMap[uKey]) {
+          dayMap[uKey].updated += 1;
+          const statusKey = statusCat === 'in-progress' ? 'status_in_progress' : `status_${statusCat}`;
+          dayMap[uKey].values[statusKey] = (dayMap[uKey].values[statusKey] || 0) + 1;
+        }
+      }
+
+      // 4. Worklogs / Hours Logged
+      const worklogs = i.fields?.worklog?.worklogs || [];
+      worklogs.forEach(wl => {
+        if (wl.started) {
+          const wlKey = wl.started.slice(0, 10);
+          if (dayMap[wlKey]) {
+            const h = (wl.timeSpentSeconds || 0) / 3600;
+            dayMap[wlKey].hours += h;
+            if (wl.author?.accountId) {
+              dayMap[wlKey].values[`worker_${wl.author.accountId}`] = (dayMap[wlKey].values[`worker_${wl.author.accountId}`] || 0) + h;
+            }
+          }
+        }
+      });
+
+      // Contributors touchpoints
+      contributors.forEach(c => {
+        if (i.fields?.updated) {
+          const uKey = i.fields.updated.slice(0, 10);
+          if (dayMap[uKey]) {
+            dayMap[uKey].values[`worker_${c.accountId}`] = (dayMap[uKey].values[`worker_${c.accountId}`] || 0) + 1;
+          }
+        }
+      });
+    });
+
+    let rawList = Object.values(dayMap).sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+
+    // If timeframe is large (>45 days), group by week for smooth rendering
+    if (daysFilter > 45) {
+      const weekly = [];
+      let currentChunk = null;
+      rawList.forEach((item, idx) => {
+        if (idx % 7 === 0 || !currentChunk) {
+          if (currentChunk) weekly.push(currentChunk);
+          currentChunk = {
+            dateStr: item.dateStr,
+            displayDate: item.displayDate,
+            created: 0,
+            resolved: 0,
+            hours: 0,
+            updated: 0,
+            values: {}
+          };
+        }
+        currentChunk.created += item.created;
+        currentChunk.resolved += item.resolved;
+        currentChunk.hours += item.hours;
+        currentChunk.updated += item.updated;
+        Object.entries(item.values).forEach(([k, v]) => {
+          currentChunk.values[k] = (currentChunk.values[k] || 0) + v;
+        });
+      });
+      if (currentChunk) weekly.push(currentChunk);
+      rawList = weekly;
+    }
+
+    // Calculate cumulative values for every series
+    const cumTracker = {};
+
+    return rawList.map(item => {
+      const pointValues = {
+        created: item.created,
+        resolved: item.resolved,
+        hours: Number(item.hours.toFixed(1)),
+        updated: item.updated,
+        ...item.values
+      };
+
+      const cumValues = {};
+      Object.entries(pointValues).forEach(([k, v]) => {
+        cumTracker[k] = (cumTracker[k] || 0) + v;
+        cumValues[k] = Number((cumTracker[k]).toFixed(1));
+      });
+
+      return {
+        ...item,
+        pointValues,
+        cumValues,
+        netChange: item.created - item.resolved
+      };
+    });
+  }, [filteredIssues, daysFilter]);
 
   // Table Data Filtering
   const tableData = useMemo(() => {
@@ -838,20 +1008,29 @@ export default function JiraAnalyticsDashboard({ config }) {
   };
 
   // SVG Chart Geometry calculations
-  const chartHeight = 240;
+  const chartHeight = 250;
   const chartWidth = 720;
-  const padding = { top: 20, right: 30, bottom: 35, left: 40 };
+  const padding = { top: 20, right: 30, bottom: 35, left: 45 };
   const innerWidth = chartWidth - padding.left - padding.right;
   const innerHeight = chartHeight - padding.top - padding.bottom;
 
+  // Maximum value across all active series
   const maxVal = useMemo(() => {
-    if (timelineData.length === 0) return 10;
-    const keyCreated = chartMode === 'cumulative' ? 'cumCreated' : 'created';
-    const keyResolved = chartMode === 'cumulative' ? 'cumResolved' : 'resolved';
-    const max = Math.max(...timelineData.map(d => Math.max(d[keyCreated], d[keyResolved])));
-    return Math.max(max * 1.15, 5); // 15% headroom
-  }, [timelineData, chartMode]);
+    if (timelineData.length === 0 || activeSeriesList.length === 0) return 10;
+    let max = 0;
 
+    timelineData.forEach(d => {
+      const source = chartMode === 'cumulative' ? d.cumValues : d.pointValues;
+      activeSeriesList.forEach(s => {
+        const val = source[s.key] || source[s.id] || 0;
+        if (val > max) max = val;
+      });
+    });
+
+    return Math.max(max * 1.15, 5); // 15% headroom
+  }, [timelineData, activeSeriesList, chartMode]);
+
+  // Points calculation for all active series
   const points = useMemo(() => {
     if (timelineData.length === 0) return [];
     const len = timelineData.length;
@@ -859,29 +1038,33 @@ export default function JiraAnalyticsDashboard({ config }) {
 
     return timelineData.map((d, i) => {
       const x = padding.left + (len > 1 ? i * xStep : innerWidth / 2);
-      const valCreated = chartMode === 'cumulative' ? d.cumCreated : d.created;
-      const valResolved = chartMode === 'cumulative' ? d.cumResolved : d.resolved;
+      const source = chartMode === 'cumulative' ? d.cumValues : d.pointValues;
       
-      const yCreated = padding.top + innerHeight - (valCreated / maxVal) * innerHeight;
-      const yResolved = padding.top + innerHeight - (valResolved / maxVal) * innerHeight;
+      const seriesValues = {};
+      const seriesY = {};
+
+      activeSeriesList.forEach(s => {
+        const val = source[s.key] ?? source[s.id] ?? 0;
+        seriesValues[s.id] = val;
+        const y = padding.top + innerHeight - (val / maxVal) * innerHeight;
+        seriesY[s.id] = isNaN(y) ? padding.top + innerHeight : y;
+      });
 
       return {
         ...d,
         x,
-        yCreated: isNaN(yCreated) ? padding.top + innerHeight : yCreated,
-        yResolved: isNaN(yResolved) ? padding.top + innerHeight : yResolved,
-        valCreated,
-        valResolved
+        seriesValues,
+        seriesY
       };
     });
-  }, [timelineData, chartMode, maxVal, innerWidth, innerHeight]);
+  }, [timelineData, activeSeriesList, chartMode, maxVal, innerWidth, innerHeight]);
 
   // Create smooth bezier path string
-  const createSplinePath = (pts, keyY) => {
+  const createSplinePath = (pts, seriesId) => {
     if (pts.length === 0) return '';
-    if (pts.length === 1) return `M ${pts[0].x} ${pts[0][keyY]}`;
+    if (pts.length === 1) return `M ${pts[0].x} ${pts[0].seriesY[seriesId]}`;
 
-    let path = `M ${pts[0].x} ${pts[0][keyY]}`;
+    let path = `M ${pts[0].x} ${pts[0].seriesY[seriesId]}`;
     for (let i = 0; i < pts.length - 1; i++) {
       const p0 = pts[i === 0 ? 0 : i - 1];
       const p1 = pts[i];
@@ -889,29 +1072,26 @@ export default function JiraAnalyticsDashboard({ config }) {
       const p3 = pts[i + 2] || p2;
 
       const cp1x = p1.x + (p2.x - p0.x) / 6;
-      const cp1y = p1[keyY] + (p2[keyY] - p0[keyY]) / 6;
+      const cp1y = p1.seriesY[seriesId] + (p2.seriesY[seriesId] - p0.seriesY[seriesId]) / 6;
       const cp2x = p2.x - (p3.x - p1.x) / 6;
-      const cp2y = p2[keyY] - (p3[keyY] - p1[keyY]) / 6;
+      const cp2y = p2.seriesY[seriesId] - (p3.seriesY[seriesId] - p1.seriesY[seriesId]) / 6;
 
-      path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2[keyY]}`;
+      path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.seriesY[seriesId]}`;
     }
     return path;
   };
 
-  const createdPath = useMemo(() => createSplinePath(points, 'yCreated'), [points]);
-  const resolvedPath = useMemo(() => createSplinePath(points, 'yResolved'), [points]);
-
-  const createdAreaPath = useMemo(() => {
-    if (points.length < 2) return '';
-    const bottomY = padding.top + innerHeight;
-    return `${createdPath} L ${points[points.length - 1].x} ${bottomY} L ${points[0].x} ${bottomY} Z`;
-  }, [createdPath, points, innerHeight]);
-
-  const resolvedAreaPath = useMemo(() => {
-    if (points.length < 2) return '';
-    const bottomY = padding.top + innerHeight;
-    return `${resolvedPath} L ${points[points.length - 1].x} ${bottomY} L ${points[0].x} ${bottomY} Z`;
-  }, [resolvedPath, points, innerHeight]);
+  // Create stepped staircase path
+  const createSteppedPath = (pts, seriesId) => {
+    if (pts.length === 0) return '';
+    let path = `M ${pts[0].x} ${pts[0].seriesY[seriesId]}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      path += ` H ${p2.x} V ${p2.seriesY[seriesId]}`;
+    }
+    return path;
+  };
 
   return (
     <div className="flex-col gap-6" style={{ marginTop: '0.5rem' }}>
@@ -1368,6 +1548,7 @@ export default function JiraAnalyticsDashboard({ config }) {
                 <div className="flex gap-1.5 flex-wrap" style={{ fontSize: '0.74rem' }}>
                   <span className="tag" style={{ background: 'rgba(59,130,246,0.15)', color: '#60a5fa' }}>Timeframe: {daysFilter}d</span>
                   <span className="tag" style={{ background: 'rgba(59,130,246,0.15)', color: '#60a5fa' }}>Project: {projectKey || 'All'}</span>
+                  <span className="tag" style={{ background: 'rgba(255,255,255,0.08)' }}>Graph: {graphMetric}</span>
                   <span className="tag" style={{ background: 'rgba(255,255,255,0.08)' }}>Components: {selectedComponents ? `${selectedComponents.length} selected` : 'All'}</span>
                   <span className="tag" style={{ background: 'rgba(255,255,255,0.08)' }}>Assignees: {selectedAssignees ? `${selectedAssignees.length} selected` : 'All'}</span>
                   <span className="tag" style={{ background: 'rgba(255,255,255,0.08)' }}>Worked By: {selectedWorkedBy ? `${selectedWorkedBy.length} selected` : 'All'}</span>
@@ -1500,31 +1681,104 @@ export default function JiraAnalyticsDashboard({ config }) {
         </div>
       </div>
 
-      {/* SECTION 1: Created vs. Resolved Trend Chart */}
+      {/* SECTION 1: Configurable & Multi-Dimensional Trend Chart */}
       <div className="glass flex-col gap-4" style={{ padding: '1.5rem', borderRadius: '12px' }}>
-        <div className="flex justify-between items-center flex-wrap gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '0.75rem' }}>
-          <div className="flex items-center gap-2">
+        <div className="flex justify-between items-center flex-wrap gap-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '0.75rem' }}>
+          
+          {/* Left: Metric Dimension Selector */}
+          <div className="flex items-center gap-2 flex-wrap">
             <BarChart3 size={18} style={{ color: 'var(--accent-color)' }} />
-            <h4 style={{ margin: 0, fontSize: '1.05rem', color: 'var(--text-primary)' }}>
-              Created vs. Resolved Trend
-            </h4>
+            <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Graph Field / Dimension:</span>
+            
+            <div style={{ background: 'rgba(255,255,255,0.05)', padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+              <select
+                value={graphMetric}
+                onChange={e => {
+                  setGraphMetric(e.target.value);
+                  setDisabledSeries(new Set());
+                }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-primary)',
+                  fontSize: '0.84rem',
+                  fontWeight: 600,
+                  outline: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="created_vs_resolved">📈 Created vs. Resolved Flow</option>
+                <option value="created">🔴 Created Issues Trend</option>
+                <option value="resolved">🟢 Resolved / Closed Trend</option>
+                <option value="hours">⏱️ Logged Work Hours (Time Spent)</option>
+                <option value="updated">⚡ Updated / Touchpoint Activity</option>
+                <option value="by_status">📊 By Status Breakdown</option>
+                <option value="by_issuetype">🏷️ By Issue Type (Bug/Story/Task)</option>
+                <option value="by_priority">🔥 By Priority (Highest to Low)</option>
+                <option value="by_component">📦 By Top Components</option>
+                <option value="by_worker">👥 By Top Contributors / Worked By</option>
+              </select>
+            </div>
           </div>
 
-          {/* Mode Switcher & Legend */}
-          <div className="flex items-center gap-4 flex-wrap">
-            {/* Legend */}
-            <div className="flex items-center gap-3" style={{ fontSize: '0.8rem' }}>
-              <div className="flex items-center gap-1.5">
-                <span style={{ width: '12px', height: '3px', background: '#f97316', borderRadius: '2px' }}></span>
-                <span style={{ color: '#fb923c' }}>Created</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span style={{ width: '12px', height: '3px', background: '#10b981', borderRadius: '2px' }}></span>
-                <span style={{ color: '#34d399' }}>Resolved</span>
-              </div>
+          {/* Right: Chart Type & Mode Toggles */}
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Visual Style Toggle (Spline, Stepped, Bars) */}
+            <div className="flex" style={{ background: 'rgba(0,0,0,0.3)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setChartType('spline')}
+                title="Smooth Spline Curves"
+                style={{
+                  padding: '0.2rem 0.55rem',
+                  fontSize: '0.75rem',
+                  border: 'none',
+                  background: chartType === 'spline' ? 'var(--accent-color)' : 'transparent',
+                  color: chartType === 'spline' ? '#fff' : 'var(--text-secondary)',
+                  fontWeight: chartType === 'spline' ? 600 : 400,
+                  borderRadius: '4px'
+                }}
+              >
+                Spline
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setChartType('stepped')}
+                title="Stepped Lines"
+                style={{
+                  padding: '0.2rem 0.55rem',
+                  fontSize: '0.75rem',
+                  border: 'none',
+                  background: chartType === 'stepped' ? 'var(--accent-color)' : 'transparent',
+                  color: chartType === 'stepped' ? '#fff' : 'var(--text-secondary)',
+                  fontWeight: chartType === 'stepped' ? 600 : 400,
+                  borderRadius: '4px'
+                }}
+              >
+                Stepped
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setChartType('bars')}
+                title="Vertical Grouped Bars"
+                style={{
+                  padding: '0.2rem 0.55rem',
+                  fontSize: '0.75rem',
+                  border: 'none',
+                  background: chartType === 'bars' ? 'var(--accent-color)' : 'transparent',
+                  color: chartType === 'bars' ? '#fff' : 'var(--text-secondary)',
+                  fontWeight: chartType === 'bars' ? 600 : 400,
+                  borderRadius: '4px'
+                }}
+              >
+                Bars
+              </button>
             </div>
 
-            {/* Mode Toggle */}
+            {/* Daily Flow vs Cumulative Toggle */}
             <div className="flex" style={{ background: 'rgba(0,0,0,0.3)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
               <button
                 type="button"
@@ -1562,6 +1816,41 @@ export default function JiraAnalyticsDashboard({ config }) {
           </div>
         </div>
 
+        {/* Interactive Legend with click-to-toggle series badges */}
+        <div className="flex items-center gap-2 flex-wrap" style={{ fontSize: '0.78rem' }}>
+          <span style={{ color: 'var(--text-secondary)', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Series:
+          </span>
+          {seriesDefinitions.map(s => {
+            const isVisible = !disabledSeries.has(s.id);
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => toggleSeries(s.id)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  background: isVisible ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)',
+                  border: `1px solid ${isVisible ? s.color : 'rgba(255,255,255,0.08)'}`,
+                  borderRadius: '12px',
+                  padding: '2px 8px',
+                  cursor: 'pointer',
+                  opacity: isVisible ? 1 : 0.45,
+                  transition: 'all 0.15s ease'
+                }}
+                title={isVisible ? `Click to hide ${s.label}` : `Click to show ${s.label}`}
+              >
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: s.color }}></span>
+                <span style={{ color: isVisible ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: isVisible ? 500 : 400 }}>
+                  {s.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
         {/* SVG Chart Render */}
         {loading && issues.length === 0 ? (
           <div className="flex justify-center items-center" style={{ height: `${chartHeight}px` }}>
@@ -1578,20 +1867,16 @@ export default function JiraAnalyticsDashboard({ config }) {
               style={{ width: '100%', height: 'auto', minWidth: '550px', overflow: 'visible' }}
             >
               <defs>
-                {/* Created Gradient */}
-                <linearGradient id="createdGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#f97316" stopOpacity="0.35" />
-                  <stop offset="100%" stopColor="#f97316" stopOpacity="0.0" />
-                </linearGradient>
-
-                {/* Resolved Gradient */}
-                <linearGradient id="resolvedGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#10b981" stopOpacity="0.35" />
-                  <stop offset="100%" stopColor="#10b981" stopOpacity="0.0" />
-                </linearGradient>
+                {/* Dynamic Series Gradients */}
+                {activeSeriesList.map(s => (
+                  <linearGradient key={s.id} id={`grad_${s.id}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={s.color} stopOpacity="0.3" />
+                    <stop offset="100%" stopColor={s.color} stopOpacity="0.0" />
+                  </linearGradient>
+                ))}
               </defs>
 
-              {/* Grid Lines */}
+              {/* Grid Lines & Y-Axis Labels */}
               {[0, 0.25, 0.5, 0.75, 1].map((ratio, idx) => {
                 const y = padding.top + innerHeight * ratio;
                 const valueLabel = Math.round(maxVal * (1 - ratio));
@@ -1618,53 +1903,112 @@ export default function JiraAnalyticsDashboard({ config }) {
                 );
               })}
 
-              {/* Area Fills */}
-              <path d={createdAreaPath} fill="url(#createdGrad)" />
-              <path d={resolvedAreaPath} fill="url(#resolvedGrad)" />
+              {/* Render Chart Based on Visual Type (Bars vs Lines/Splines) */}
+              {chartType === 'bars' ? (
+                // Grouped Bar Columns
+                points.map((pt, pIdx) => {
+                  const numSeries = activeSeriesList.length;
+                  const totalGroupWidth = Math.max(innerWidth / points.length - 4, 4);
+                  const barWidth = Math.max(totalGroupWidth / numSeries - 1, 2);
+                  const groupStartX = pt.x - totalGroupWidth / 2;
 
-              {/* Spline Lines */}
-              <path d={createdPath} fill="none" stroke="#f97316" strokeWidth="2.5" strokeLinecap="round" />
-              <path d={resolvedPath} fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" />
+                  return (
+                    <g key={pIdx}>
+                      {activeSeriesList.map((s, sIdx) => {
+                        const val = pt.seriesValues[s.id] || 0;
+                        const barHeight = Math.max((val / maxVal) * innerHeight, 0);
+                        const bx = groupStartX + sIdx * (barWidth + 1);
+                        const by = padding.top + innerHeight - barHeight;
 
-              {/* Data Point Circles & Hover Trigger */}
-              {points.map((pt, idx) => {
-                const isHovered = hoveredDataPoint?.dateStr === pt.dateStr;
-                return (
-                  <g key={idx}>
-                    {/* Created Dot */}
-                    <circle
-                      cx={pt.x}
-                      cy={pt.yCreated}
-                      r={isHovered ? 5 : 3}
-                      fill="#f97316"
-                      stroke="#0f172a"
-                      strokeWidth="1.5"
-                    />
+                        return (
+                          <rect
+                            key={s.id}
+                            x={bx}
+                            y={by}
+                            width={barWidth}
+                            height={barHeight}
+                            fill={s.color}
+                            opacity={hoveredDataPoint?.dateStr === pt.dateStr ? 1 : 0.85}
+                            rx="2"
+                          />
+                        );
+                      })}
+                    </g>
+                  );
+                })
+              ) : (
+                // Spline or Stepped Line Render
+                <>
+                  {/* Area Fills for top 2 series if spline */}
+                  {chartType === 'spline' && activeSeriesList.slice(0, 2).map(s => {
+                    const linePath = createSplinePath(points, s.id);
+                    if (!linePath || points.length < 2) return null;
+                    const bottomY = padding.top + innerHeight;
+                    const areaPath = `${linePath} L ${points[points.length - 1].x} ${bottomY} L ${points[0].x} ${bottomY} Z`;
+                    return (
+                      <path
+                        key={`area_${s.id}`}
+                        d={areaPath}
+                        fill={`url(#grad_${s.id})`}
+                      />
+                    );
+                  })}
 
-                    {/* Resolved Dot */}
-                    <circle
-                      cx={pt.x}
-                      cy={pt.yResolved}
-                      r={isHovered ? 5 : 3}
-                      fill="#10b981"
-                      stroke="#0f172a"
-                      strokeWidth="1.5"
-                    />
+                  {/* Lines for each active series */}
+                  {activeSeriesList.map(s => {
+                    const linePath = chartType === 'stepped'
+                      ? createSteppedPath(points, s.id)
+                      : createSplinePath(points, s.id);
 
-                    {/* Invisible hover area */}
-                    <rect
-                      x={pt.x - innerWidth / (points.length * 2)}
-                      y={padding.top}
-                      width={innerWidth / points.length}
-                      height={innerHeight}
-                      fill="transparent"
-                      style={{ cursor: 'pointer' }}
-                      onMouseEnter={() => setHoveredDataPoint(pt)}
-                      onMouseLeave={() => setHoveredDataPoint(null)}
-                    />
-                  </g>
-                );
-              })}
+                    return (
+                      <path
+                        key={`line_${s.id}`}
+                        d={linePath}
+                        fill="none"
+                        stroke={s.color}
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    );
+                  })}
+
+                  {/* Data Point Circles */}
+                  {points.map((pt, pIdx) => {
+                    const isHovered = hoveredDataPoint?.dateStr === pt.dateStr;
+                    return (
+                      <g key={pIdx}>
+                        {activeSeriesList.map(s => (
+                          <circle
+                            key={s.id}
+                            cx={pt.x}
+                            cy={pt.seriesY[s.id]}
+                            r={isHovered ? 4.5 : 2.5}
+                            fill={s.color}
+                            stroke="#0f172a"
+                            strokeWidth="1.5"
+                          />
+                        ))}
+                      </g>
+                    );
+                  })}
+                </>
+              )}
+
+              {/* Invisible Hover Rectangles */}
+              {points.map((pt, idx) => (
+                <rect
+                  key={idx}
+                  x={pt.x - innerWidth / (points.length * 2)}
+                  y={padding.top}
+                  width={innerWidth / points.length}
+                  height={innerHeight}
+                  fill="transparent"
+                  style={{ cursor: 'pointer' }}
+                  onMouseEnter={() => setHoveredDataPoint(pt)}
+                  onMouseLeave={() => setHoveredDataPoint(null)}
+                />
+              ))}
 
               {/* X-Axis Date Labels */}
               {points.map((pt, idx) => {
@@ -1685,7 +2029,7 @@ export default function JiraAnalyticsDashboard({ config }) {
               })}
             </svg>
 
-            {/* Hover Tooltip Card */}
+            {/* Dynamic Multi-Series Hover Tooltip Card */}
             {hoveredDataPoint && (
               <div
                 className="glass"
@@ -1693,32 +2037,39 @@ export default function JiraAnalyticsDashboard({ config }) {
                   position: 'absolute',
                   top: '10px',
                   right: '20px',
-                  padding: '0.6rem 0.85rem',
+                  padding: '0.65rem 0.9rem',
                   borderRadius: '8px',
                   fontSize: '0.78rem',
-                  background: 'rgba(15, 23, 42, 0.92)',
-                  border: '1px solid rgba(255, 255, 255, 0.15)',
-                  boxShadow: '0 8px 20px rgba(0,0,0,0.5)',
+                  background: 'rgba(15, 23, 42, 0.94)',
+                  border: '1px solid rgba(255, 255, 255, 0.18)',
+                  boxShadow: '0 10px 25px rgba(0,0,0,0.6)',
                   display: 'flex',
                   flexDirection: 'column',
                   gap: '4px',
-                  zIndex: 20
+                  zIndex: 20,
+                  minWidth: '160px'
                 }}
               >
-                <span style={{ fontWeight: 600, color: 'var(--text-primary)', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '2px' }}>
+                <span style={{ fontWeight: 600, color: 'var(--text-primary)', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '3px' }}>
                   {hoveredDataPoint.displayDate} ({hoveredDataPoint.dateStr})
                 </span>
-                <div className="flex justify-between gap-3">
-                  <span style={{ color: '#fb923c' }}>🔴 Created:</span>
-                  <strong>{hoveredDataPoint.valCreated}</strong>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <span style={{ color: '#34d399' }}>🟢 Resolved:</span>
-                  <strong>{hoveredDataPoint.valResolved}</strong>
-                </div>
-                {chartMode === 'flow' && (
-                  <div className="flex justify-between gap-3" style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '2px' }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>Net Change:</span>
+
+                {activeSeriesList.map(s => {
+                  const val = hoveredDataPoint.seriesValues[s.id] ?? 0;
+                  return (
+                    <div key={s.id} className="flex justify-between items-center gap-3">
+                      <span style={{ color: s.color, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: s.color }}></span>
+                        {s.label}:
+                      </span>
+                      <strong>{val}</strong>
+                    </div>
+                  );
+                })}
+
+                {graphMetric === 'created_vs_resolved' && chartMode === 'flow' && (
+                  <div className="flex justify-between gap-3" style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '3px', marginTop: '2px' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>Net Velocity:</span>
                     <strong style={{ color: hoveredDataPoint.netChange > 0 ? '#f97316' : '#10b981' }}>
                       {hoveredDataPoint.netChange > 0 ? `+${hoveredDataPoint.netChange}` : hoveredDataPoint.netChange}
                     </strong>

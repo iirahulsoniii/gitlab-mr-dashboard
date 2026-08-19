@@ -1,8 +1,11 @@
 import React from 'react';
-import { GitPullRequest, GitMerge, XCircle, Clock, MessageSquare, GitBranch, ExternalLink } from 'lucide-react';
+import { GitPullRequest, GitMerge, XCircle, Clock, MessageSquare, GitBranch, ExternalLink, Tag } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { extractJiraKeysFromMR, getJiraBrowseUrl } from '../jiraUtils';
 
 export default function MRCard({ mr }) {
+  const jiraKeys = extractJiraKeysFromMR(mr);
+
   const getStatusIcon = () => {
     switch(mr.state) {
       case 'merged': return <GitMerge size={16} />;
@@ -48,6 +51,36 @@ export default function MRCard({ mr }) {
             <span style={{ wordBreak: 'break-all' }}>{mr.source_branch}</span>
             <span>→</span>
             <span style={{ wordBreak: 'break-all' }}>{mr.target_branch}</span>
+          </div>
+        )}
+
+        {jiraKeys.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap" style={{ marginTop: '0.65rem' }}>
+            {jiraKeys.map(key => (
+              <a
+                key={key}
+                href={getJiraBrowseUrl(key)}
+                target="_blank"
+                rel="noreferrer"
+                className="tag"
+                style={{
+                  background: 'rgba(59, 130, 246, 0.12)',
+                  color: '#60a5fa',
+                  border: '1px solid rgba(59, 130, 246, 0.35)',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  textDecoration: 'none',
+                  borderRadius: '4px',
+                  padding: '2px 7px'
+                }}
+                title={`Open Jira issue ${key}`}
+              >
+                <Tag size={11} /> {key}
+              </a>
+            ))}
           </div>
         )}
       </div>

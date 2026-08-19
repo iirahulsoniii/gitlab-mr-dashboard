@@ -12,6 +12,8 @@ import { Settings, Database, ListFilter, FileText, CalendarClock, Code2, CheckSq
 import { fetchMergeRequests } from './api';
 import { fetchServerStorage, saveServerStorage, debouncedSaveServerStorage } from './storageApi';
 
+import { extractJiraKeysFromMR } from './jiraUtils';
+
 const DEFAULT_FILTERS = {
   author: '',
   mergedBy: '',
@@ -222,8 +224,13 @@ function App() {
       }
       if (filters.status !== 'all' && mr.state !== filters.status) return false;
       if (filters.branch) {
-        const query = filters.branch.toLowerCase();
-        if (!mr.source_branch.toLowerCase().includes(query) && !mr.target_branch.toLowerCase().includes(query)) {
+        const query = filters.branch.toLowerCase().trim();
+        const inSource = mr.source_branch && mr.source_branch.toLowerCase().includes(query);
+        const inTarget = mr.target_branch && mr.target_branch.toLowerCase().includes(query);
+        const inTitle = mr.title && mr.title.toLowerCase().includes(query);
+        const jiraKeys = extractJiraKeysFromMR(mr);
+        const inJira = jiraKeys.some(k => k.toLowerCase().includes(query) || k.replace('-', '').toLowerCase().includes(query.replace('-', '')));
+        if (!inSource && !inTarget && !inTitle && !inJira) {
           return false;
         }
       }
@@ -258,8 +265,13 @@ function App() {
       if (filters.status !== 'all' && mr.state !== filters.status) return false;
       if (filters.service !== 'all' && mr.project_name !== filters.service) return false;
       if (filters.branch) {
-        const query = filters.branch.toLowerCase();
-        if (!mr.source_branch.toLowerCase().includes(query) && !mr.target_branch.toLowerCase().includes(query)) {
+        const query = filters.branch.toLowerCase().trim();
+        const inSource = mr.source_branch && mr.source_branch.toLowerCase().includes(query);
+        const inTarget = mr.target_branch && mr.target_branch.toLowerCase().includes(query);
+        const inTitle = mr.title && mr.title.toLowerCase().includes(query);
+        const jiraKeys = extractJiraKeysFromMR(mr);
+        const inJira = jiraKeys.some(k => k.toLowerCase().includes(query) || k.replace('-', '').toLowerCase().includes(query.replace('-', '')));
+        if (!inSource && !inTarget && !inTitle && !inJira) {
           return false;
         }
       }
@@ -270,23 +282,19 @@ function App() {
   // Extract Jira Tickets from filtered MRs
   const jiraTickets = useMemo(() => {
     const tickets = new Map();
-    // Regex matches uppercase letters followed by a dash and numbers, e.g. CS-334343
-    const regex = /([A-Z]+-\d+)/g;
     
     filteredMRs.forEach(mr => {
-      const matches = mr.title.match(regex);
-      if (matches) {
-        matches.forEach(ticketId => {
-          if (!tickets.has(ticketId)) {
-            tickets.set(ticketId, { id: ticketId, mrs: [] });
-          }
-          // Avoid pushing duplicate MRs if ticket is mentioned multiple times
-          const ticketData = tickets.get(ticketId);
-          if (!ticketData.mrs.find(m => m.id === mr.id)) {
-            ticketData.mrs.push(mr);
-          }
-        });
-      }
+      const keys = extractJiraKeysFromMR(mr);
+      keys.forEach(ticketId => {
+        if (!tickets.has(ticketId)) {
+          tickets.set(ticketId, { id: ticketId, mrs: [] });
+        }
+        // Avoid pushing duplicate MRs if ticket is mentioned multiple times
+        const ticketData = tickets.get(ticketId);
+        if (!ticketData.mrs.find(m => m.id === mr.id)) {
+          ticketData.mrs.push(mr);
+        }
+      });
     });
     return Array.from(tickets.values()).sort((a, b) => a.id.localeCompare(b.id));
   }, [filteredMRs]);

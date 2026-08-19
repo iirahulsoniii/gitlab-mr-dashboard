@@ -764,12 +764,13 @@ export async function fetchJiraAnalyticsIssues(config, { days = 30, projectKey =
     const contributorsMap = new Map();
 
     const addOrUpdate = (author, role, hours = 0) => {
-      if (!author || !author.accountId) return;
-      const id = author.accountId;
+      if (!author) return;
+      const id = author.accountId || author.emailAddress || author.displayName || author.name;
+      if (!id) return;
       if (!contributorsMap.has(id)) {
         contributorsMap.set(id, {
           accountId: id,
-          displayName: author.displayName || author.emailAddress || 'User',
+          displayName: author.displayName || author.emailAddress || author.name || 'User',
           emailAddress: author.emailAddress || '',
           avatarUrl: author.avatarUrls?.['24x24'] || author.avatarUrls?.['48x48'] || '',
           roles: new Set(),
@@ -797,19 +798,12 @@ export async function fetchJiraAnalyticsIssues(config, { days = 30, projectKey =
     // 3. Comment authors
     const comments = issue.fields?.comment?.comments || [];
     comments.forEach(cm => {
-      if (cm.author?.accountId) {
+      if (cm.author) {
         addOrUpdate(cm.author, 'Commented');
-        if (contributorsMap.has(cm.author.accountId)) {
-          contributorsMap.get(cm.author.accountId).commentCount += 1;
+        const id = cm.author.accountId || cm.author.emailAddress || cm.author.displayName || cm.author.name;
+        if (id && contributorsMap.has(id)) {
+          contributorsMap.get(id).commentCount += 1;
         }
-      }
-    });
-
-    // 4. Changelog histories (Status change & field updates)
-    const histories = issue.changelog?.histories || [];
-    histories.forEach(h => {
-      if (h.author?.accountId) {
-        addOrUpdate(h.author, 'Updated Ticket');
       }
     });
 

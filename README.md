@@ -14,55 +14,52 @@ A comprehensive React (Vite) and FastAPI application that brings together your M
 
 ---
 
-## Local Setup Instructions
+## ⚡ Quick Start (1-Click Startup for Non-Technical Users)
+
+You can launch the entire dashboard with a single click or command:
+
+### 🍎 On macOS:
+Double-click `start-mac.command` in Finder, or run in Terminal:
+```bash
+./start-mac.sh
+```
+*This automatically checks Node.js & Python, installs dependencies, starts the backend and frontend dev servers, and opens `http://localhost:5173` in your browser.*
+
+### 🪟 On Windows:
+Double-click `start-windows.bat` in File Explorer, or run in Command Prompt:
+```cmd
+start-windows.bat
+```
+*This handles dependency checks, launches the servers, and opens the application in your default browser.*
+
+---
+
+## Manual Setup Instructions
 
 ### 1. Requirements
-- Node.js (v16+)
+- Node.js (v18+)
 - Python (v3.9+)
-- Oracle Client Libraries (if required by `oracledb` thick mode)
 
 ### 2. Configure Sensitive Information
-To keep your private information secure, the database connection strings are read from a local configuration file that is **ignored by version control (`.gitignore`)**.
+To keep your private information secure, database connection strings are read from `db-backend/.env` (ignored by version control).
 
 1. Navigate to the backend directory:
    ```bash
    cd db-backend
    ```
-2. Copy the template file to create your local config file:
+2. Copy the template:
    ```bash
    cp .env.example .env
    ```
-3. Open `.env` and fill in your Oracle credentials for Stage and Production. Do **not** commit this file.
+3. Fill in any database credentials if using the Database Query tool. *(GitLab and Jira tokens are configured directly in the web UI settings and securely stored in your browser)*.
 
-*(Note: GitLab and Jira tokens are securely stored in your browser's local storage and configured directly through the UI's Settings Menu, so you don't need to put them in `.env`).*
-
-### 3. Backend Setup
-Set up the Python virtual environment and install dependencies:
-
+### 3. Running Manually
 ```bash
-cd db-backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 4. Frontend Setup
-Navigate back to the project root and install NPM dependencies:
-
-```bash
-cd ..
 npm install
-```
-
-### 5. Running the Application
-You only need to run a single command to start the entire stack:
-
-```bash
 npm run dev
 ```
 
-This will automatically spin up:
-- The Vite Frontend at `http://localhost:5173`
-- The FastAPI Backend proxy at `http://localhost:8000`
+This will spin up:
+- Vite Frontend: `http://localhost:5173`
+- FastAPI Backend: `http://localhost:8000`
 
-Open your browser to `http://localhost:5173` and enjoy!

@@ -6,6 +6,7 @@ import {
   fetchIssuesByFixVersion 
 } from '../jiraApi';
 import { debouncedSaveServerStorage } from '../storageApi';
+import { extractJiraKeysFromText } from '../jiraUtils';
 import { 
   Plus, 
   Trash2, 
@@ -374,14 +375,13 @@ export default function PlannedReleaseDashboard({ config }) {
     return { text: `Overdue by ${Math.abs(diffDays)}d`, type: 'overdue' };
   };
 
-  // Add Ticket Handler (handles single or multiple tickets e.g. CS-12345, CS-67890)
+  // Add Ticket Handler (handles single or multiple tickets e.g. CS-12345, CS-67890, cs 34744)
   const handleAddTickets = async (keysToAdd = null) => {
     const rawInput = keysToAdd || ticketInput;
     if (!rawInput || !activeRelease) return;
 
-    // Parse keys separated by comma, whitespace, newline
-    const regex = /([A-Za-z]+-\d+)/g;
-    const matchedKeys = Array.from(new Set(rawInput.toUpperCase().match(regex) || []));
+    // Parse keys flexibly (e.g. CS-34744, cs 34744, cs-34744, hotfix-cs-34744)
+    const matchedKeys = Array.from(new Set(extractJiraKeysFromText(rawInput)));
 
     if (matchedKeys.length === 0) {
       showNotification('Please enter a valid Jira ticket key (e.g. CS-17557)', 'error');
