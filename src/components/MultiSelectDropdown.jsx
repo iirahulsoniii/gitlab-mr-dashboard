@@ -16,6 +16,7 @@ export default function MultiSelectDropdown({
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [alignRight, setAlignRight] = useState(false);
+  const dropdownRef = useRef(null);
   const searchInputRef = useRef(null);
 
   // Close on click outside and auto-detect screen edge for right alignment
