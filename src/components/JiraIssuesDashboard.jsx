@@ -692,7 +692,7 @@ export default function JiraIssuesDashboard({ config }) {
       )}
 
       {/* Shared Filter Bar */}
-      <div className="glass flex justify-between items-center" style={{ padding: '0.85rem 1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+      <div className="glass flex justify-between items-center" style={{ padding: '0.85rem 1.25rem', flexWrap: 'wrap', gap: '0.75rem', position: 'relative', zIndex: 100, overflow: 'visible' }}>
         <div className="flex items-center gap-3 flex-wrap">
           {/* Quick Search */}
           <div className="flex items-center gap-1" style={{ background: 'rgba(255,255,255,0.04)', padding: '0.35rem 0.65rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>

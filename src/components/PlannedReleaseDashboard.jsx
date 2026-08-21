@@ -1047,7 +1047,7 @@ export default function PlannedReleaseDashboard({ config }) {
           </div>
 
           {/* Add Jira Tickets & Filter Toolbar */}
-          <div className="glass ticket-search-add-bar">
+          <div className="glass ticket-search-add-bar" style={{ position: 'relative', zIndex: 100, overflow: 'visible' }}>
             {/* Add Ticket Box */}
             <div className="ticket-input-group">
               <input 
@@ -1091,7 +1091,7 @@ export default function PlannedReleaseDashboard({ config }) {
             </div>
 
             {/* Search & Filter Controls within Release */}
-            <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-3 flex-wrap" style={{ position: 'relative', zIndex: 100 }}>
               <div className="flex items-center gap-1" style={{ background: 'rgba(255,255,255,0.04)', padding: '0.3rem 0.6rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
                 <Search size={14} style={{ color: 'var(--text-secondary)' }} />
                 <input 
@@ -1160,7 +1160,7 @@ export default function PlannedReleaseDashboard({ config }) {
           </div>
 
           {/* Planned Jira Tickets List */}
-          <div className="flex-col gap-3">
+          <div className="flex-col gap-3" style={{ position: 'relative', zIndex: 1 }}>
             {filteredTickets.length === 0 ? (
               <div className="glass" style={{ padding: '3.5rem 2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
                 <Rocket size={36} style={{ color: 'var(--accent-color)', opacity: 0.5, marginBottom: '0.75rem' }} />

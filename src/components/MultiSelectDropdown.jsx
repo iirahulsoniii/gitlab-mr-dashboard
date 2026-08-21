@@ -15,9 +15,10 @@ export default function MultiSelectDropdown({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [alignRight, setAlignRight] = useState(false);
   const dropdownRef = useRef(null);
 
-  // Close on click outside
+  // Close on click outside and auto-detect screen edge for right alignment
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
@@ -25,6 +26,15 @@ export default function MultiSelectDropdown({
       }
     };
     if (isOpen) {
+      if (dropdownRef.current) {
+        const rect = dropdownRef.current.getBoundingClientRect();
+        const spaceOnRight = window.innerWidth - rect.left;
+        if (spaceOnRight < 300) {
+          setAlignRight(true);
+        } else {
+          setAlignRight(false);
+        }
+      }
       document.addEventListener('mousedown', handleClickOutside);
     }
     return () => document.removeEventListener('mousedown', handleClickOutside);
@@ -90,7 +100,7 @@ export default function MultiSelectDropdown({
   }, [isAllSelected, isNoneSelected, currentSelectedList, allLabel, title, options]);
 
   return (
-    <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block', width, zIndex: isOpen ? 1000 : 'auto' }}>
+    <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block', width, zIndex: isOpen ? 99999 : 'auto' }}>
       <button
         type="button"
         className="btn"
@@ -118,11 +128,12 @@ export default function MultiSelectDropdown({
           style={{
             position: 'absolute',
             top: 'calc(100% + 6px)',
-            left: 0,
+            left: alignRight ? 'auto' : 0,
+            right: alignRight ? 0 : 'auto',
             minWidth: '240px',
             maxWidth: '320px',
             maxHeight: '360px',
-            zIndex: 99999,
+            zIndex: 100000,
             boxShadow: '0 20px 45px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.15)',
             borderRadius: '8px',
             padding: '0.65rem',
