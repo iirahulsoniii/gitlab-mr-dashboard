@@ -20,24 +20,35 @@ export default function MultiSelectDropdown({
 
   // Close on click outside and auto-detect screen edge for right alignment
   useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
-        setIsOpen(false);
-      }
-    };
-    if (isOpen) {
+    const checkAlignment = () => {
       if (dropdownRef.current) {
         const rect = dropdownRef.current.getBoundingClientRect();
-        const spaceOnRight = window.innerWidth - rect.left;
-        if (spaceOnRight < 300) {
+        // Standard popover width is up to 320px.
+        // If left-aligned (rect.left + 330px) extends beyond window edge, switch to right-aligned!
+        const projectedRight = rect.left + 330;
+        if (projectedRight > window.innerWidth - 12) {
           setAlignRight(true);
         } else {
           setAlignRight(false);
         }
       }
+    };
+
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+
+    if (isOpen) {
+      checkAlignment();
+      window.addEventListener('resize', checkAlignment);
       document.addEventListener('mousedown', handleClickOutside);
     }
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    return () => {
+      window.removeEventListener('resize', checkAlignment);
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
   }, [isOpen]);
 
   const allIds = useMemo(() => options.map(o => (typeof o === 'string' ? o : o.id)), [options]);
@@ -131,7 +142,7 @@ export default function MultiSelectDropdown({
             left: alignRight ? 'auto' : 0,
             right: alignRight ? 0 : 'auto',
             minWidth: '240px',
-            maxWidth: '320px',
+            maxWidth: 'min(320px, calc(100vw - 32px))',
             maxHeight: '360px',
             zIndex: 100000,
             boxShadow: '0 20px 45px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.15)',
