@@ -16,15 +16,13 @@ export default function MultiSelectDropdown({
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [alignRight, setAlignRight] = useState(false);
-  const dropdownRef = useRef(null);
+  const searchInputRef = useRef(null);
 
   // Close on click outside and auto-detect screen edge for right alignment
   useEffect(() => {
     const checkAlignment = () => {
       if (dropdownRef.current) {
         const rect = dropdownRef.current.getBoundingClientRect();
-        // Standard popover width is up to 320px.
-        // If left-aligned (rect.left + 330px) extends beyond window edge, switch to right-aligned!
         const projectedRight = rect.left + 330;
         if (projectedRight > window.innerWidth - 12) {
           setAlignRight(true);
@@ -42,8 +40,11 @@ export default function MultiSelectDropdown({
 
     if (isOpen) {
       checkAlignment();
+      setTimeout(() => searchInputRef.current?.focus(), 50);
       window.addEventListener('resize', checkAlignment);
       document.addEventListener('mousedown', handleClickOutside);
+    } else {
+      setSearchQuery('');
     }
     return () => {
       window.removeEventListener('resize', checkAlignment);
@@ -157,15 +158,15 @@ export default function MultiSelectDropdown({
         >
           {/* Search box - Always visible */}
           {showSearch && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'rgba(0,0,0,0.35)', padding: '0.35rem 0.55rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.12)' }}>
-              <Search size={13} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'rgba(15, 23, 42, 0.95)', padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid rgba(59, 130, 246, 0.4)', boxShadow: '0 0 10px rgba(59, 130, 246, 0.1)' }}>
+              <Search size={14} style={{ color: 'var(--accent-color)', flexShrink: 0 }} />
               <input
+                ref={searchInputRef}
                 type="text"
-                placeholder={searchPlaceholder}
+                placeholder={searchPlaceholder || `Search ${title}...`}
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                autoFocus
-                style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', fontSize: '0.8rem', width: '100%' }}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', fontSize: '0.82rem', width: '100%' }}
               />
               {searchQuery && (
                 <button
